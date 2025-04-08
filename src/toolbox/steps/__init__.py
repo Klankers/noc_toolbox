@@ -47,7 +47,6 @@ def create_step(step_config):
     """Dynamically create a step instance from config"""
     step_name = step_config["name"]
     step_class = STEP_CLASSES.get(step_name)
-    print(STEP_CLASSES)
     if not step_class:
         raise ValueError(f"Step '{step_name}' not recognized.")
 
