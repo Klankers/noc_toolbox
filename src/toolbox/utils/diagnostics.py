@@ -16,10 +16,6 @@ def plot_time_series(
             )
         x_data = data[x_var].values  # Extract x_data (usually time dimension)
         y_data = data[y_var].values  # Extract the y_data (variable to plot)
-    elif isinstance(data, pd.DataFrame):
-        # Fallback to Pandas DataFrame handling
-        x_data = data[x_var]
-        y_data = data[y_var]
     else:
         # Assuming custom format such as lists or arrays
         x_data, y_data = data[0], data[1]
@@ -39,9 +35,6 @@ def plot_histogram(data, var, bins=30, title="Histogram", xlabel=None, **kwargs)
         if var not in data:
             raise ValueError(f"Variable {var} must exist in the dataset.")
         data_to_plot = data[var].values
-    elif isinstance(data, pd.DataFrame):
-        # Fallback to Pandas DataFrame handling
-        data_to_plot = data[var]
     else:
         # Handle custom data types like lists or arrays
         data_to_plot = data
@@ -61,9 +54,6 @@ def plot_boxplot(data, var, title="Box Plot", xlabel=None, **kwargs):
         if var not in data:
             raise ValueError(f"Variable {var} must exist in the dataset.")
         data_to_plot = data[var].values
-    elif isinstance(data, pd.DataFrame):
-        # Fallback to Pandas DataFrame handling
-        data_to_plot = data[var]
     else:
         # Handle custom data types like lists or arrays
         data_to_plot = data
@@ -82,12 +72,8 @@ def plot_correlation_matrix(data, variables=None, title="Correlation Matrix", **
             variables = list(data.data_vars)  # Use all variables by default
         # Extract the variables to calculate the correlation matrix
         corr = data[variables].to_array().T.corr(dim="dim_0")
-    elif isinstance(data, pd.DataFrame):
-        corr = data.corr()
     else:
-        raise TypeError(
-            "Data must be a pandas DataFrame or xarray Dataset to generate correlation matrix."
-        )
+        raise TypeError("Data must be a Xarray Dataset to generate correlation matrix.")
 
     plt.figure(figsize=(10, 6))
     sns.heatmap(corr, annot=True, cmap="coolwarm", fmt=".2f", linewidths=0.5, **kwargs)
@@ -96,7 +82,7 @@ def plot_correlation_matrix(data, variables=None, title="Correlation Matrix", **
 
 
 def generate_summary_stats(data, **kwargs):
-    """Generate summary statistics for a given dataset (works for both xarray and pandas)."""
+    """Generate summary statistics for a given dataset"""
     if isinstance(data, xr.Dataset):
         # For xarray, we'll summarize each data variable
         print("Summary Statistics:")
@@ -106,24 +92,14 @@ def generate_summary_stats(data, **kwargs):
                 data[var].mean().values, data[var].std().values
             )  # Just showing mean and std for simplicity
             print()
-    elif isinstance(data, pd.DataFrame):
-        summary = data.describe().transpose()
-        print("Summary Statistics:\n", summary)
     else:
-        print(
-            "Summary statistics only supported for xarray Dataset or pandas DataFrame."
-        )
+        print("Summary statistics only supported for xarray Dataset ")
 
 
 def check_missing_values(data):
-    """Check for missing values in the dataset (works for both xarray and pandas)."""
+    """Check for missing values in the dataset."""
     if isinstance(data, xr.Dataset):
         missing = data.isnull().sum()
         print("Missing Values in Xarray Dataset:\n", missing)
-    elif isinstance(data, pd.DataFrame):
-        missing = data.isnull().sum()
-        print("Missing Values in Pandas DataFrame:\n", missing)
     else:
-        print(
-            "Missing value check only supported for xarray Dataset or pandas DataFrame."
-        )
+        print("Missing value check only supported for xarray Dataset ")
