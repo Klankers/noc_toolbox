@@ -53,5 +53,5 @@ def create_step(step_config):
     return step_class(
         name=step_name,
         parameters=step_config.get("parameters", {}),
-        diagnostics=step_config.get("diagnostics", False),
+        diagnostics=step_config.get("parameters", {}).get("diagnostics", False),
     )

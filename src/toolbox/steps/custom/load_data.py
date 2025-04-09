@@ -31,6 +31,7 @@ class LoadOG1(BaseStep):
     def run(self):
 
         source = self.parameters["file_path"]
+        print(f"Params: {self.parameters}")
         print(f"[LoadData] Loading {source} OG1")
         # load data from xarray
         self.data = xr.open_dataset(source)
@@ -42,9 +43,16 @@ class LoadOG1(BaseStep):
             self.add_elapsed_time()
 
         if "add_depth" in self.parameters:
-            self.add_depth(lat_label=self.parameters["lat_label"])
+            self.add_depth(
+                lat_label=(
+                    self.parameters["lat_label"]
+                    if "lat_label" in self.parameters
+                    else "LATITUDE"
+                )
+            )
 
         # Generate diagnostics if enabled
+        print(f"[LoadData] Diagnostics: {self.diagnostics}")
         if self.diagnostics:
             self.generate_diagnostics()
 
@@ -53,7 +61,7 @@ class LoadOG1(BaseStep):
     def generate_diagnostics(self):
         print(f"[LoadData] Generating diagnostics...")
         # Print summary stats
-        diag.generate_summary_stats(self.data)
+        diag.generate_info(self.data)
 
     def add_meta(self):
         print(f"[LoadData] Adding metadata...")
@@ -116,7 +124,15 @@ class LoadOG1(BaseStep):
         """
         Converts pressure to depth and appends it to the dataset
         """
-        p, lat = self.data["PRES"].values, self.data[lat_label].values
+        try:
+            p, lat = self.data["PRES"].values, self.data[lat_label].values
+        except KeyError as e:
+            print(
+                f"ERROR: The {lat_label} variable does not appear in the netCDF file. These functions are only intended"
+                " for use with OG1 format netCDF files."
+            )
+            print(f"Available variables: {list(self.data.keys())}")
+            raise e
         # use GSW to convert pressure to depth
         depth = -1 * gsw.conversions.z_from_p(p, lat)
         self.data["DEPTH"] = (("N_MEASUREMENTS",), depth)

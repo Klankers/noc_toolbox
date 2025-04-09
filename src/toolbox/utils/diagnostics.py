@@ -81,19 +81,14 @@ def plot_correlation_matrix(data, variables=None, title="Correlation Matrix", **
     plt.show()
 
 
-def generate_summary_stats(data, **kwargs):
-    """Generate summary statistics for a given dataset"""
+def generate_info(data):
+    """Generate info for a given dataset"""
     if isinstance(data, xr.Dataset):
         # For xarray, we'll summarize each data variable
-        print("Summary Statistics:")
-        for var in data.data_vars:
-            print(f"{var}:")
-            print(
-                data[var].mean().values, data[var].std().values
-            )  # Just showing mean and std for simplicity
-            print()
+        print("Data Info:")
+        print(data.info())
     else:
-        print("Summary statistics only supported for xarray Dataset ")
+        print("Data Info only supported for xarray Dataset ")
 
 
 def check_missing_values(data):

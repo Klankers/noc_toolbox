@@ -18,6 +18,7 @@ class Pipeline:
                 config = yaml.safe_load(file)
             # Add steps from config
             self.steps = config["steps"]
+            self.global_parameters = config["pipeline"]
 
     def add_step(
         self,
@@ -84,6 +85,9 @@ class Pipeline:
         """Runs the entire pipeline"""
         for step in self.steps:
             self.execute_step(step)
+
+        if self.global_parameters.get("visualisation", False):
+            self.visualise_pipeline()
 
     def visualise_pipeline(self):
         """Generates a visualiation of the pipeline execution"""
