@@ -7,4 +7,3 @@ if __name__ == "__main__":
         "/home/adamwa/Ocean Informatics/Projects/toolbox/src/toolbox/config.yaml"
     )
     pipeline.run()
-    pipeline.visualise_pipeline()
