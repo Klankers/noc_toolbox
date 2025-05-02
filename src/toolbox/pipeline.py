@@ -65,11 +65,11 @@ class Pipeline:
                 return found
         return None
 
-    def execute_step(self, step_config):
+    def execute_step(self, step_config, _context):
         """Executes a single step"""
         step = create_step(step_config)
         print(f"Executing: {step.name}")
-        step.run()
+        return step.run(_context)
 
     def run_last_step(self):
         """Runs only the most recently added step"""
@@ -83,8 +83,9 @@ class Pipeline:
 
     def run(self):
         """Runs the entire pipeline"""
+        _context = None
         for step in self.steps:
-            self.execute_step(step)
+            _context = self.execute_step(step, _context)
 
         if self.global_parameters.get("visualisation", False):
             self.visualise_pipeline()

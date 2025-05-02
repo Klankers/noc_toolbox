@@ -3,10 +3,14 @@ class BaseStep:
         self.name = name
         self.parameters = parameters or {}
         self.diagnostics = diagnostics
+        self.context = {}
 
-    def run(self):
+    def run(self, context=None):
         """To be implemented by subclasses"""
+        if context:
+            self.context = context
         raise NotImplementedError(f"Step '{self.name}' must implement a run() method.")
+        return self.context
 
     def generate_diagnostics(self):
         """Hook for diagnostics (optional)"""
