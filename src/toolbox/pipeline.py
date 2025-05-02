@@ -67,9 +67,9 @@ class Pipeline:
 
     def execute_step(self, step_config, _context):
         """Executes a single step"""
-        step = create_step(step_config)
+        step = create_step(step_config, _context)
         print(f"Executing: {step.name}")
-        return step.run(_context)
+        return step.run()
 
     def run_last_step(self):
         """Runs only the most recently added step"""

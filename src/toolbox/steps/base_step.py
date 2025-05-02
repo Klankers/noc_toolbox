@@ -1,14 +1,12 @@
 class BaseStep:
-    def __init__(self, name, parameters=None, diagnostics=False):
+    def __init__(self, name, parameters=None, diagnostics=False, context=None):
         self.name = name
         self.parameters = parameters or {}
         self.diagnostics = diagnostics
-        self.context = {}
+        self.context = context or {}
 
-    def run(self, context=None):
+    def run(self):
         """To be implemented by subclasses"""
-        if context:
-            self.context = context
         raise NotImplementedError(f"Step '{self.name}' must implement a run() method.")
         return self.context
 

@@ -36,13 +36,13 @@ class LoadOG1(BaseStep):
         # load data from xarray
         self.data = xr.open_dataset(source)
 
-        if "add_meta" in self.parameters:
+        if self.parameters["add_meta"]:
             self.add_meta()
 
-        if "add_elapsed_time" in self.parameters:
+        if self.parameters["add_elapsed_time"]:
             self.add_elapsed_time()
 
-        if "add_depth" in self.parameters:
+        if self.parameters["add_depth"]:
             self.add_depth(
                 lat_label=(
                     self.parameters["lat_label"]

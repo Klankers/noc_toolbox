@@ -43,7 +43,7 @@ def discover_steps():
 discover_steps()
 
 
-def create_step(step_config):
+def create_step(step_config, _context):
     """Dynamically create a step instance from config"""
     step_name = step_config["name"]
     step_class = STEP_CLASSES.get(step_name)
@@ -54,4 +54,5 @@ def create_step(step_config):
         name=step_name,
         parameters=step_config.get("parameters", {}),
         diagnostics=step_config.get("parameters", {}).get("diagnostics", False),
+        context=_context,
     )
