@@ -82,8 +82,6 @@ class Pipeline:
         last_step = self.steps[-1]
         print(f"Running last step: {last_step['name']}")
         self.context = self.execute_step(last_step, self._context)
-        # debug
-        print(f"Context after running last step: {self._context}")
 
     def run(self):
         """Runs the entire pipeline"""
