@@ -106,6 +106,43 @@ def impossible_speed_test(df):
 
     return df
 
+def global_range_test(df):
+    """
+    Target Variable: PRES, TEMP, PRAC_SALINITY
+    Test Number: 6
+    Flag Number: 4, 3 (bad data, probably bad data)
+    Checks that the pressure, temperature and practically salinity do not lie outside expected
+    global extremes.
+    """
+    # Structured (variable_to_test, [lower_limit, upper_limit], variables_to_flag, flag)
+    test_calls = (
+        ('PRES', [-np.inf, -5], ['PRES', 'TEMP', 'PRAC_SALINITY'], 4),
+        ('PRES', [-5, -2.4], ['PRES', 'TEMP', 'PRAC_SALINITY'], 3),
+        ('TEMP', [-2.5, 40], ['TEMP'], 4),
+        ('PRAC_SALINITY', [2, 41], ['PRAC_SALINITY'], 4)
+    )
+
+    # Not the most efficient implementation because of second for loop.
+    for var, lims, flag_vars, flag in test_calls:
+        for flag_var in flag_vars:
+            df = df.with_columns(
+                ((pl.col(var) > lims[0]) & (pl.col(var) < lims[1])).cast(pl.Int64) * flag
+                .alias(f'{flag_var}_QC')
+            )
+
+    return df
+
+def regional_range_test(df):
+    """
+    Target Variable: TEMP, PRAC_SALINITY
+    Test Number: 7
+    Flag Number: 4 (bad data)
+    Checks that the temperature and practically salinity do not lie outside expected
+    regional (Mediterranean and Red Seas) extremes.
+    """
+    # TODO: Ask team if this is required
+
+
 
 class SalinityQCStep(BaseStep):
     def run(self):
