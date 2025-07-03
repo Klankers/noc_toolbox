@@ -196,11 +196,11 @@ class SalinityQC(BaseStep):
             CNDC = self.tsr[1].CNDC_QC.values[nonan]
         else:
             CNDC = self.tsr[0].CNDC.values[nonan]
-        self.tsr[2]["CNDC_QC"].values[nonan] = gsw.SP_from_C(
+        self.tsr[2]["PSAL_QC"].values[nonan] = gsw.SP_from_C(
             10 * CNDC, TEMP_corrected, PRES
         )  # OG1 is in [S/m] but should be in [mS/cm] for gsw.
         SA = gsw.SA_from_SP(
-            self.tsr[2]["CNDC_QC"].values[nonan],
+            self.tsr[2]["PSAL_QC"].values[nonan],
             PRES,
             self.tsr[2].LON.values[nonan],
             self.tsr[2].LAT.values[nonan],
@@ -213,7 +213,7 @@ class SalinityQC(BaseStep):
         """
         For the full deployment, calculate the optimal conductivity time lag relative to temperature to reduce salinity spikes for each glider profile.
         If more than 300 profiles are present, the optimal lag is estimated every 10 profiles.
-        Display the optimal conductivity time lag calculated for each profile, estimate the median of this lag, and apply this median lag to corrected variables (conductivity_qc/CNDC_QC).
+        Display the optimal conductivity time lag calculated for each profile, estimate the median of this lag, and apply this median lag to corrected variables (CNDC_QC/PSAL_QC).
         This correction should reduce salinity spikes that result from the misalignment between conductivity and temperature sensors and from the difference in sensor response times.
 
 
@@ -327,11 +327,11 @@ class SalinityQC(BaseStep):
 
         # Save corrected salinity/density after applying the optimal CTlag on conductivity (this conductivity is not saved, only used to reduce salinity noise).
         nonan = ~np.isnan(self.tsr[0].CNDC.values)
-        time_second = (
+        TIME_CTD_s = (
             self.tsr[0].TIME_CTD.values[nonan] - self.tsr[0].TIME_CTD.values[nonan][0]
         ) / np.timedelta64(1, "s")
-        conductivity = self.tsr[0].CNDC.values[nonan]
-        shft = interpolate.interp1d(time_second, conductivity, bounds_error=False)
+        CNDC = self.tsr[0].CNDC.values[nonan]
+        shft = interpolate.interp1d(TIME_CTD_s, CNDC, bounds_error=False)
 
         varsi = ["CNDC_QC", "PSAL_QC", "DENSITY_QC", "SIGMA0_QC"]
         for vari in varsi:
@@ -343,7 +343,7 @@ class SalinityQC(BaseStep):
             )
             self.tsr[1][vari].attrs = self.tsr[0][vari[:-3]].attrs.copy()
             self.tsr[1][vari].attrs["comment"] = vari + " with CT lag alignment"
-        self.tsr[1]["CNDC_QC"].values[nonan] = shft(time_second + tau_median)
+        self.tsr[1]["CNDC_QC"].values[nonan] = shft(TIME_CTD_s + tau_median)
         self.tsr[1]["PSAL_QC"].values[nonan] = gsw.conversions.SP_from_C(
             10 * self.tsr[1]["CNDC_QC"].values[nonan],
             self.tsr[1].TEMP.values[nonan],
