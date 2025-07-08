@@ -32,3 +32,7 @@ class BaseStep:
     def generate_diagnostics(self):
         """Hook for diagnostics (optional)"""
         pass
+
+    def log(self, message):
+        """Log messages with step name"""
+        print(f"[{self.name}] {message}")
