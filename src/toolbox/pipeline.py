@@ -1,7 +1,7 @@
 """Pipeline Class"""
 
 import yaml
-from steps import create_step, STEP_CLASSES, STEP_DEPENDENCIES
+from toolbox.steps import create_step, STEP_CLASSES, STEP_DEPENDENCIES
 from graphviz import Digraph
 
 
@@ -50,8 +50,11 @@ class Pipeline:
     ):
         """Dynamically adds a step and optionally runs it immediately"""
         if step_name not in STEP_CLASSES:
+            print(STEP_CLASSES)
             # Check if the step is recognised
-            raise ValueError(f"Step '{step_name}' is not recognized.")
+            raise ValueError(
+                f"Step '{step_name}' is not recognized. or missing @register_step."
+            )
 
         step_config = {
             "name": step_name,

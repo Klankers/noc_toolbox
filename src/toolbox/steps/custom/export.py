@@ -1,10 +1,11 @@
 """Class definition for exporting data steps."""
 
 #### Mandatory imports ####
-from ..base_step import BaseStep
-import utils.diagnostics as diag
+from ..base_step import BaseStep, register_step
+import toolbox.utils.diagnostics as diag
 
 
+@register_step
 class ExportStep(BaseStep):
     step_name = "Data Export"
 

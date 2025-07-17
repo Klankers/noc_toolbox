@@ -1,8 +1,8 @@
 """Class definition for loading data steps."""
 
 #### Mandatory imports ####
-from ..base_step import BaseStep
-import utils.diagnostics as diag
+from toolbox.steps.base_step import BaseStep, register_step
+import toolbox.utils.diagnostics as diag
 
 #### Custom imports ####
 import xarray as xr
@@ -11,6 +11,7 @@ import numpy as np
 import gsw
 
 
+@register_step
 class LoadOG1(BaseStep):
     """
     Step for loading OG1 data.
