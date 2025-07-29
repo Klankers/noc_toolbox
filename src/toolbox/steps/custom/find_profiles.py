@@ -150,6 +150,7 @@ class FindProfilesStep(BaseStep):
         )
 
         if self.diagnostics:
+            self.log("Generating diagnostics")
             root = self.generate_diagnostics()
             root.mainloop()
 
