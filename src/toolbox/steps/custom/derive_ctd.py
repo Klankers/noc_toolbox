@@ -46,15 +46,13 @@ class DeriveCTDVariables(BaseStep):
         Raises:
             ValueError: If no data is found in the context
         """
-        print(f"[Derive CTD Variables] Processing CTD...")
+        self.log(f"Processing CTD...")
 
         # Validate that data exists in the processing context
         if "data" not in self.context:
-            raise ValueError(
-                "[Derive CTD Variables] No data found in context. Please load data first."
-            )
+            raise ValueError("No data found in context. Please load data first.")
         else:
-            print(f"[Derive CTD Variables] Data found in context.")
+            self.log(f"Data found in context.")
 
         data = self.context["data"]
 
@@ -109,7 +107,7 @@ class DeriveCTDVariables(BaseStep):
 
         # Process each GSW function call to derive new variables
         for var_name, func, args in gsw_function_calls:
-            print(f"[Derive CTD] Deriving {var_name}...")
+            self.log(f"Deriving {var_name}...")
 
             # Use Polars struct operations to efficiently apply GSW functions
             # This approach handles vectorized operations across the entire dataset
@@ -119,9 +117,9 @@ class DeriveCTDVariables(BaseStep):
                 .alias(var_name)
             )
 
-        # Print diagnostic information if diagnostics are enabled
+        # self.log diagnostic information if diagnostics are enabled
         if self.diagnostics:
-            print(df.describe(percentiles=[]))
+            self.log(df.describe(percentiles=[]))
 
         # Define metadata for each derived variable following CF conventions
         variable_metadata = {
