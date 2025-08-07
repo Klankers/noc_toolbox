@@ -50,7 +50,7 @@ class AdjustSalinity(BaseStep):
         These coefficients should be valid for pumped SeaBird CTsail as described in Woo (2019) by using their flow rate in the conductivity cell.
         This function should further be adapted to unpumped CTD by taking into account the glider velocity through the water based on the pitch angle or a hydrodynamic flight model.
 
-        Woo, L.M. (2019). Delayed Mode QA/QC Best Practice Manual Version 2.0. Integrated Marine Observing System. DOI: 10.26198/5c997b5fdc9bd (http://dx.doi.org/ 10.26198/5c997b5fdc9bd).
+        Woo, L.M. (2019). Delayed Mode QA/QC Best Practice Manual Version 2.0. Integrated Marine Observing System. DOI: 10.26198/5c997b5fdc9bd (http://dx.doi.org/10.26198/5c997b5fdc9bd).
 
         Parameters
         -----------
@@ -342,7 +342,7 @@ class AdjustSalinity(BaseStep):
             self.tsr[1][vari] = xr.DataArray(
                 np.full(self.tsr[1].dims[dim_name], np.nan),
                 dims=[dim_name],
-                coords={dim_name: self.tsr[1].time},
+                coords={dim_name: self.tsr[1].TIME},
             )
             self.tsr[1][vari].attrs = self.tsr[0][vari[:-3]].attrs.copy()
             self.tsr[1][vari].attrs["comment"] = vari + " with CT lag alignment"
