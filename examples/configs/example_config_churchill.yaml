@@ -11,7 +11,7 @@ steps:
       add_meta: false # Add metadata to the data
       add_depth: true  # Add depth information to the data
       add_elapsed_time: false
-      lat_label: "DEPLOYMENT_LATITUDE"
+      lat_label: "LATITUDE"
     diagnostics: false  # Enable diagnostics
   
   - name: "Find Profiles"
