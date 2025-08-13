@@ -14,7 +14,6 @@ import matplotlib
 # TODO: Do we need a bin nan rows QC to speed up processing?
 
 
-@register_step
 class QC_Test(ABC):
 
     @abstractmethod
@@ -315,6 +314,7 @@ def spike_test(df):
     return df
 
 
+@register_step
 class ArgoQCStep(BaseStep):
     step_name = "Argo QC"
 
@@ -358,7 +358,7 @@ class ArgoQCStep(BaseStep):
                 "[Argo QC] No data found in context. Please load data first."
             )
         else:
-            print(f"[Argo QC] Data found in context.")
+            self.log("Data found in context.")
         data = self.context["data"]
         # Convert data to polars for fast processing
         qc_variables = [
@@ -411,15 +411,3 @@ class ArgoQCStep(BaseStep):
             )
         self.context["data"] = data
         return self.context
-
-
-class SalinityQCStep(BaseStep):
-    def run(self):
-        print(f"[SalinityQC] Running QC with threshold {self.parameters['threshold']}")
-
-
-class TemperatureQCStep(BaseStep):
-    def run(self):
-        print(
-            f"[TemperatureQC] Running QC with threshold {self.parameters['threshold']}"
-        )
