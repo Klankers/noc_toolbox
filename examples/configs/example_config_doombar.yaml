@@ -15,9 +15,9 @@ steps:
 
   - name: "Derive CTD"
     parameters:
-      conductivity_unit_conversion_factor: 10
-      pressure_unit_conversion_factor: 10
-      latitude_longitude_conversion_factor: 0.01
+      conductivity_unit_conversion_factor: 1
+      pressure_unit_conversion_factor: 1
+      latitude_longitude_conversion_factor: 1
       interpolate_latitude_longitude: true
     diagnostics: true
   
