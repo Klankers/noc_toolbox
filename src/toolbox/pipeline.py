@@ -2,13 +2,14 @@
 
 import yaml
 import pandas as pd
+import numpy as np
 import xarray as xr
 from toolbox.utils.diagnostics import (
     summarising_profiles,
     find_closest_prof,
-    plot_distance_ts,
+    plot_distance_time_grid,
+    plot_glider_pair_heatmap_grid,
 )
-from matplotlib import pyplot as plt
 
 from toolbox.steps import create_step, STEP_CLASSES, STEP_DEPENDENCIES
 from graphviz import Digraph
@@ -252,11 +253,6 @@ class PipelineManager:
         if self._contexts is None:
             raise RuntimeError("Pipelines must be run before generating summaries.")
 
-        # Extract diagnostic flags from settings
-        show_plots = self.settings.get("diagnostics", {}).get("show_plots", True)
-        output_path = self.settings.get("diagnostics", {}).get(
-            "distance_plot_output", None
-        )
         print("[Pipeline Manager] Generating glider distance summaries...")
         # Step 1: Generate per-glider summaries
         summary_per_glider = {}
@@ -278,52 +274,41 @@ class PipelineManager:
             summary_df = summarising_profiles(ds, pipeline_name)
             summary_per_glider[pipeline_name] = summary_df
 
-        # Step 2: Build pairwise distance plots
-        glider_names = list(summary_per_glider.keys())
-        grid_size = len(glider_names)
-        fig, axes = plt.subplots(
-            grid_size, grid_size, figsize=(15, 15), sharex=True, sharey=True
-        )
-        fig.suptitle("Distance between Gliders Over Time", fontsize=16)
+        # Step 2: Find closest profiles across gliders
+        # Extract diagnostic flags from settings
+        show_plots = self.settings.get("diagnostics", {}).get("show_plots", True)
 
-        combined_summaries = []
-
-        for i, g_id in enumerate(glider_names):
-            for j, g_b_id in enumerate(glider_names):
-                ref_df = summary_per_glider[g_id]
-                comp_df = summary_per_glider[g_b_id]
-
-                paired_df = find_closest_prof(ref_df, comp_df)
-                combined_summaries.append(paired_df)
-
-                ax = axes[i, j]
-                for name, group in paired_df.groupby("glider_name"):
-                    ax.plot(
-                        group["median_TIME"],
-                        group["glider_b_distance_km"],
-                        label=name,
-                        marker="o",
-                        linestyle="-",
-                    )
-
-                ax.set_title(f"{g_id} vs {g_b_id}")
-                ax.grid(True)
-                if i == grid_size - 1:
-                    ax.set_xlabel("Datetime")
-                if j == 0:
-                    ax.set_ylabel("Distance (km)")
-                if i == j:
-                    ax.legend()
-
-        fig.tight_layout()
-
-        if output_path:
-            plt.savefig(output_path)
-            print(f"[Diagnostics] Saved glider distance grid to: {output_path}")
-        elif show_plots:
-            plt.show()
+        if show_plots:
+            print("[Pipeline Manager] Plotting distance time grid...")
+            # After generating all summaries...
+            plot_distance_time_grid(
+                summaries=summary_per_glider,
+                output_path=self.settings.get("diagnostics", {}).get(
+                    "distance_plot_output", None
+                ),
+                show=self.settings.get("diagnostics", {}).get("show_plots", True),
+            )
         else:
-            plt.close()
+            print("[Pipeline Manager] Skipping distance time grid plot.")
+            # Generate combined_summaries without plotting
+            combined_summaries = []
+            for i, g_id in summary_per_glider.items():
+                for j, g_b_id in summary_per_glider.items():
+                    ref_df = summary_per_glider[g_id]
+                    comp_df = summary_per_glider[g_b_id]
 
-        # Step 3: Return concatenated summary (optional)
+                    paired_df = find_closest_prof(ref_df, comp_df)
+                    combined_summaries.append(paired_df)
+
+        print("[Pipeline Manager] Finding closest profiles across gliders...")
+        plot_glider_pair_heatmap_grid(
+            summaries=summary_per_glider,
+            time_bins=np.arange(0, 13, 2),
+            dist_bins=np.arange(0, 11, 2),
+            output_path=self.settings.get("diagnostics", {}).get(
+                "heatmap_output", None
+            ),
+            show=self.settings.get("diagnostics", {}).get("show_plots", True),
+        )
+
         return pd.concat(combined_summaries, ignore_index=True)

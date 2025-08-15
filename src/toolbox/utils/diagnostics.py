@@ -5,6 +5,7 @@ import pandas as pd
 import numpy as np
 from geopy.distance import geodesic
 from toolbox.utils.time import safe_median_datetime
+from typing import Dict, List, Optional
 
 
 def plot_time_series(
@@ -101,6 +102,9 @@ def check_missing_values(data):
         print("Missing Values in Xarray Dataset:\n", missing)
     else:
         print("Missing value check only supported for xarray Dataset ")
+
+
+#### General Diagnostics Functions ####
 
 
 def summarising_profiles(ds: xr.Dataset, source_name: str) -> pd.DataFrame:
@@ -209,35 +213,248 @@ def find_closest_prof(df_a: pd.DataFrame, df_b: pd.DataFrame) -> pd.DataFrame:
     return df_result
 
 
-def plot_distance_ts(matchup_df: pd.DataFrame, glider_ref: str, glider_comp: str):
+def plot_distance_time_grid(
+    summaries: Dict[str, pd.DataFrame],
+    output_path: str = None,
+    show: bool = True,
+    figsize: tuple = (16, 16),
+):
     """
-    Plot time series of distance between glider_ref and closest glider_comp profiles.
+    Plot a grid of distance-over-time plots for all glider pair combinations.
 
     Parameters
     ----------
-    matchup_df : pd.DataFrame
-        Output from find_closest_prof().
+    summaries : dict
+        Dictionary of {glider_name: pd.DataFrame} from summarising_profiles().
 
-    glider_ref : str
-        Name of the reference glider.
+    output_path : str, optional
+        If provided, the grid will be saved to this path.
 
-    glider_comp : str
-        Name of the comparison glider.
+    show : bool
+        If True, plt.show() will be called.
+
+    figsize : tuple
+        Size of the full figure.
     """
-    plt.figure(figsize=(12, 6))
-    for name, group in matchup_df.groupby("glider_name"):
-        plt.plot(
-            group["median_TIME"],
-            group["glider_b_distance_km"],
-            label=name,
-            marker="o",
-            linestyle="-",
+    glider_names = list(summaries.keys())
+    grid_size = len(glider_names)
+
+    fig, axes = plt.subplots(
+        grid_size, grid_size, figsize=figsize, sharex=True, sharey=True
+    )
+    fig.suptitle("Distance Between Gliders Over Time", fontsize=18)
+
+    for i, g_id in enumerate(glider_names):
+        for j, g_b_id in enumerate(glider_names):
+            ref_df = summaries[g_id]
+            comp_df = summaries[g_b_id]
+
+            paired_df = find_closest_prof(ref_df, comp_df)
+
+            ax = axes[i, j]
+            if paired_df.empty:
+                ax.set_title(f"{g_id} vs {g_b_id}\n(no data)")
+                ax.axis("off")
+                continue
+
+            for name, group in paired_df.groupby("glider_name"):
+                ax.plot(
+                    group["median_TIME"],
+                    group["glider_b_distance_km"],
+                    label=name,
+                    marker="o",
+                    linestyle="-",
+                )
+
+            ax.set_title(f"{g_id} vs {g_b_id}")
+            ax.grid(True)
+            if i == grid_size - 1:
+                ax.set_xlabel("Datetime")
+            if j == 0:
+                ax.set_ylabel("Distance (km)")
+            if i == j:
+                ax.legend(fontsize=8)
+
+    fig.tight_layout(rect=[0, 0, 1, 0.95])
+
+    if output_path:
+        plt.savefig(output_path)
+        print(f"[Diagnostics] Saved glider distance grid to: {output_path}")
+    elif show:
+        plt.show()
+    else:
+        plt.close()
+
+
+#### HEATMAPS ####
+
+
+def find_candidate_glider_pairs(
+    df_a: pd.DataFrame,
+    df_b: pd.DataFrame,
+    glider_a_name: str,
+    glider_b_name: str,
+    time_thresh_hr: float = 2.0,
+    dist_thresh_km: float = 5.0,
+) -> pd.DataFrame:
+    """
+    Identify glider profile pairs within time and distance thresholds.
+    Returns a DataFrame with best match from glider B for each profile in A.
+    """
+    if df_a.empty or df_b.empty:
+        return pd.DataFrame()
+
+    df_a = df_a.copy()
+    df_b = df_b.copy()
+
+    df_a["median_datetime"] = pd.to_datetime(df_a["median_TIME"])
+    df_b["median_datetime"] = pd.to_datetime(df_b["median_TIME"])
+
+    matches = []
+
+    for idx_a, row_a in df_a.iterrows():
+        time_diffs = (
+            np.abs(
+                (df_b["median_datetime"] - row_a["median_datetime"]).dt.total_seconds()
+            )
+            / 3600.0
+        )
+        df_b_filtered = df_b[time_diffs <= time_thresh_hr].copy()
+        df_b_filtered["time_diff_hr"] = time_diffs[time_diffs <= time_thresh_hr]
+
+        if df_b_filtered.empty:
+            continue
+
+        distances = [
+            (
+                geodesic(
+                    (row_a["median_LATITUDE"], row_a["median_LONGITUDE"]),
+                    (row_b["median_LATITUDE"], row_b["median_LONGITUDE"]),
+                ).km
+                if pd.notnull(row_a["median_LATITUDE"])
+                and pd.notnull(row_a["median_LONGITUDE"])
+                and pd.notnull(row_b["median_LATITUDE"])
+                and pd.notnull(row_b["median_LONGITUDE"])
+                else np.nan
+            )
+            for _, row_b in df_b_filtered.iterrows()
+        ]
+
+        df_b_filtered["dist_km"] = distances
+        df_b_filtered = df_b_filtered[df_b_filtered["dist_km"] <= dist_thresh_km]
+
+        if df_b_filtered.empty:
+            continue
+
+        best_match = df_b_filtered.loc[df_b_filtered["dist_km"].idxmin()]
+        matches.append(
+            {
+                "glider_a_profile_id": row_a["profile_id"],
+                "glider_name": glider_a_name,
+                "glider_b_profile_id": best_match["profile_id"],
+                "glider_b_name": glider_b_name,
+                "time_diff_hr": best_match["time_diff_hr"],
+                "dist_km": best_match["dist_km"],
+            }
         )
 
-    plt.xlabel("Datetime")
-    plt.ylabel("Distance to Closest Profile (km)")
-    plt.ylim(0, 50)
-    plt.title(f"Distance between {glider_ref} and {glider_comp} Over Time")
-    plt.legend()
-    plt.tight_layout()
-    plt.show()
+    return pd.DataFrame(matches)
+
+
+def plot_heatmap_glider_df(
+    ax,
+    matchup_df: pd.DataFrame,
+    time_bins: np.ndarray,
+    dist_bins: np.ndarray,
+    glider_a_name: str,
+    glider_b_name: str,
+):
+    """
+    Plot cumulative 2D histogram of time/distance matchups for a glider pair on a given axis.
+    """
+    if matchup_df.empty:
+        ax.set_title(f"{glider_a_name} vs {glider_b_name} (no matches)")
+        ax.axis("off")
+        return
+
+    H, xedges, yedges = np.histogram2d(
+        matchup_df["time_diff_hr"], matchup_df["dist_km"], bins=[time_bins, dist_bins]
+    )
+
+    H_cum = H.cumsum(axis=0).cumsum(axis=1)
+    X, Y = np.meshgrid(yedges, xedges)
+    im = ax.pcolormesh(X, Y, H_cum, cmap="PuBu", shading="auto")
+    ax.set_xlabel("Distance Threshold (km)")
+    ax.set_ylabel("Time Threshold (hr)")
+    ax.set_title(f"{glider_a_name} vs {glider_b_name}")
+
+    # Annotate values
+    for i in range(H_cum.shape[0]):
+        for j in range(H_cum.shape[1]):
+            val = int(H_cum[i, j])
+            if val > 0:
+                x_center = (yedges[j] + yedges[j + 1]) / 2
+                y_center = (xedges[i] + xedges[i + 1]) / 2
+                color = "white" if val > H_cum.max() / 2 else "black"
+                ax.text(
+                    x_center,
+                    y_center,
+                    str(val),
+                    ha="center",
+                    va="center",
+                    fontsize=7,
+                    color=color,
+                )
+
+
+def plot_glider_pair_heatmap_grid(
+    summaries: Dict[str, pd.DataFrame],
+    time_bins: np.ndarray,
+    dist_bins: np.ndarray,
+    output_path: Optional[str] = None,
+    show: bool = True,
+    figsize: tuple = (16, 16),
+):
+    """
+    Generate an NxN grid of cumulative heatmaps for all glider pair combinations.
+    """
+    glider_names = list(summaries.keys())
+    grid_size = len(glider_names)
+
+    fig, axes = plt.subplots(
+        grid_size, grid_size, figsize=figsize, sharex=True, sharey=True
+    )
+    fig.suptitle("Heatmap of Matchups Between Gliders", fontsize=18)
+
+    for i, g_a in enumerate(glider_names):
+        for j, g_b in enumerate(glider_names):
+            df_a = summaries[g_a]
+            df_b = summaries[g_b]
+            ax = axes[i, j]
+
+            matches = find_candidate_glider_pairs(
+                df_a,
+                df_b,
+                glider_a_name=g_a,
+                glider_b_name=g_b,
+                time_thresh_hr=max(time_bins),
+                dist_thresh_km=max(dist_bins),
+            )
+
+            plot_heatmap_glider_df(
+                ax=ax,
+                matchup_df=matches,
+                time_bins=time_bins,
+                dist_bins=dist_bins,
+                glider_a_name=g_a,
+                glider_b_name=g_b,
+            )
+
+    fig.tight_layout(rect=[0, 0, 1, 0.95])
+    if output_path:
+        plt.savefig(output_path)
+        print(f"[Diagnostics] Saved glider heatmap grid to: {output_path}")
+    elif show:
+        plt.show()
+    else:
+        plt.close()
