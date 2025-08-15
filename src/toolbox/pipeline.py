@@ -277,19 +277,66 @@ class PipelineManager:
         # Step 2: Find closest profiles across gliders
         # Extract diagnostic flags from settings
         show_plots = self.settings.get("diagnostics", {}).get("show_plots", True)
-
+        save_plots = self.settings.get("diagnostics", {}).get("save_plots", False)
+        distance_over_time_matrix = self.settings.get("diagnostics", {}).get(
+            "distance_over_time_matrix", False
+        )
+        matchup_thresholds = self.settings.get("diagnostics", {}).get(
+            "matchup_thresholds", {}
+        )
+        max_time_threshold = (
+            self.settings.get("diagnostics", {})
+            .get("matchup_thresholds", {})
+            .get("max_time_threshold", 12)
+        )
+        max_distance_threshold = (
+            self.settings.get("diagnostics", {})
+            .get("matchup_thresholds", {})
+            .get("max_distance_threshold", 20)
+        )
+        bin_size = (
+            self.settings.get("diagnostics", {})
+            .get("matchup_thresholds", {})
+            .get("bin_size", 2)
+        )
         if show_plots:
-            print("[Pipeline Manager] Plotting distance time grid...")
-            # After generating all summaries...
-            combined_summaries = plot_distance_time_grid(
-                summaries=summary_per_glider,
-                output_path=self.settings.get("diagnostics", {}).get(
-                    "distance_plot_output", None
-                ),
-                show=self.settings.get("diagnostics", {}).get("show_plots", True),
-            )
+            if not distance_over_time_matrix:
+                print("[Pipeline Manager] Distance over time matrix is disabled.")
+            else:
+                print("[Pipeline Manager] Plotting distance time grid...")
+                # After generating all summaries...
+                combined_summaries = plot_distance_time_grid(
+                    summaries=summary_per_glider,
+                    output_path=self.settings.get("diagnostics", {}).get(
+                        "distance_plot_output", None
+                    ),
+                    show=self.settings.get("diagnostics", {}).get("show_plots", True),
+                )
+
+            if not matchup_thresholds:
+                print(
+                    "[Pipeline Manager] Matchup thresholds are not set. Skipping heatmap grid."
+                )
+            else:
+                print("[Pipeline Manager] Finding closest profiles across gliders...")
+                # compute time taken for caluclations
+                start_time = pd.Timestamp.now()
+                plot_glider_pair_heatmap_grid(
+                    summaries=summary_per_glider,
+                    time_bins=np.arange(0, max_time_threshold + 1, bin_size),
+                    dist_bins=np.arange(0, max_distance_threshold + 1, bin_size),
+                    output_path=self.settings.get("diagnostics", {}).get(
+                        "heatmap_output", None
+                    ),
+                    show=self.settings.get("diagnostics", {}).get("show_plots", True),
+                )
+                end_time = pd.Timestamp.now()
+                print(
+                    f"[Pipeline Manager] Heatmap grid plotted in {end_time - start_time}"
+                )
+
         else:
-            print("[Pipeline Manager] Skipping distance time grid plot.")
+            print("[Pipeline Manager] Skipping plots.")
             # Generate combined_summaries without plotting
             combined_summaries = []
             for i, g_id in summary_per_glider.items():
@@ -300,20 +347,5 @@ class PipelineManager:
                     paired_df = find_closest_prof(ref_df, comp_df)
                     combined_summaries.append(paired_df)
             combined_summaries = pd.concat(combined_summaries, ignore_index=True)
-
-        print("[Pipeline Manager] Finding closest profiles across gliders...")
-        # compute time taken for caluclations
-        start_time = pd.Timestamp.now()
-        plot_glider_pair_heatmap_grid(
-            summaries=summary_per_glider,
-            time_bins=np.arange(0, 13, 2),
-            dist_bins=np.arange(0, 11, 2),
-            output_path=self.settings.get("diagnostics", {}).get(
-                "heatmap_output", None
-            ),
-            show=self.settings.get("diagnostics", {}).get("show_plots", True),
-        )
-        end_time = pd.Timestamp.now()
-        print(f"[Pipeline Manager] Heatmap grid plotted in {end_time - start_time}")
 
         return

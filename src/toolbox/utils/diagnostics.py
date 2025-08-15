@@ -3,8 +3,9 @@ import seaborn as sns
 import xarray as xr
 import pandas as pd
 import numpy as np
+import matplotlib.dates as mdates
 from geopy.distance import geodesic
-from toolbox.utils.time import safe_median_datetime
+from toolbox.utils.time import safe_median_datetime, add_datetime_secondary_xaxis
 from typing import Dict, List, Optional
 
 
@@ -249,7 +250,8 @@ def plot_distance_time_grid(
         for j, g_b_id in enumerate(glider_names):
             if g_id == g_b_id:
                 axes[i, j].set_title(f"{g_id} vs {g_b_id} (self-comparison)")
-                axes[i, j].axis("off")
+                if i != 0 or j != len(glider_names) - 1:
+                    axes[i, j].axis("off")
                 continue
             ref_df = summaries[g_id]
             comp_df = summaries[g_b_id]
@@ -272,8 +274,20 @@ def plot_distance_time_grid(
                     linestyle="-",
                 )
 
+                # Rotate X tick labels
+                for label in ax.get_xticklabels():
+                    label.set_rotation(45)
+                    label.set_ha("right")
+
             ax.set_title(f"{g_id} vs {g_b_id}")
             ax.grid(True)
+            # add additional axis if top row or right column
+            if i == 0:
+                add_datetime_secondary_xaxis(ax)
+
+            if j == grid_size - 1:
+                ax.secondary_yaxis("right")
+
             if i == grid_size - 1:
                 ax.set_xlabel("Datetime")
             if j == 0:
@@ -375,6 +389,9 @@ def plot_heatmap_glider_df(
     dist_bins: np.ndarray,
     glider_a_name: str,
     glider_b_name: str,
+    i: int,
+    j: int,
+    grid_size: int,
 ):
     """
     Plot cumulative 2D histogram of time/distance matchups for a glider pair on a given axis.
@@ -391,8 +408,18 @@ def plot_heatmap_glider_df(
     H_cum = H.cumsum(axis=0).cumsum(axis=1)
     X, Y = np.meshgrid(yedges, xedges)
     im = ax.pcolormesh(X, Y, H_cum, cmap="PuBu", shading="auto")
-    ax.set_xlabel("Distance Threshold (km)")
-    ax.set_ylabel("Time Threshold (hr)")
+    # add additional axis if top row or right column
+    if i == 0:
+        secax = ax.secondary_xaxis("top")
+        secax.set_xlabel("Time Threshold (hr)")
+    if j == grid_size - 1:
+        secax = ax.secondary_yaxis("right")
+        secax.set_ylabel("Distance Threshold (km)")
+
+    if i == grid_size - 1:
+        ax.set_xlabel("Distance Threshold (km)")
+    if j == 0:
+        ax.set_ylabel("Time Threshold (hr)")
     ax.set_title(f"{glider_a_name} vs {glider_b_name}")
 
     # Annotate values
@@ -439,7 +466,6 @@ def plot_glider_pair_heatmap_grid(
             df_b = summaries[g_b]
 
             if g_a == g_b:
-                axes[i, j].set_title(f"{g_a} vs {g_b} (self-comparison)")
                 axes[i, j].axis("off")
                 continue
             ax = axes[i, j]
@@ -460,6 +486,9 @@ def plot_glider_pair_heatmap_grid(
                 dist_bins=dist_bins,
                 glider_a_name=g_a,
                 glider_b_name=g_b,
+                i=i,
+                j=j,
+                grid_size=grid_size,
             )
 
     fig.tight_layout(rect=[0, 0, 1, 0.95])
