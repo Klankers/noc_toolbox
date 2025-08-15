@@ -281,7 +281,7 @@ class PipelineManager:
         if show_plots:
             print("[Pipeline Manager] Plotting distance time grid...")
             # After generating all summaries...
-            plot_distance_time_grid(
+            combined_summaries = plot_distance_time_grid(
                 summaries=summary_per_glider,
                 output_path=self.settings.get("diagnostics", {}).get(
                     "distance_plot_output", None
@@ -299,8 +299,11 @@ class PipelineManager:
 
                     paired_df = find_closest_prof(ref_df, comp_df)
                     combined_summaries.append(paired_df)
+            combined_summaries = pd.concat(combined_summaries, ignore_index=True)
 
         print("[Pipeline Manager] Finding closest profiles across gliders...")
+        # compute time taken for caluclations
+        start_time = pd.Timestamp.now()
         plot_glider_pair_heatmap_grid(
             summaries=summary_per_glider,
             time_bins=np.arange(0, 13, 2),
@@ -310,5 +313,7 @@ class PipelineManager:
             ),
             show=self.settings.get("diagnostics", {}).get("show_plots", True),
         )
+        end_time = pd.Timestamp.now()
+        print(f"[Pipeline Manager] Heatmap grid plotted in {end_time - start_time}")
 
-        return pd.concat(combined_summaries, ignore_index=True)
+        return

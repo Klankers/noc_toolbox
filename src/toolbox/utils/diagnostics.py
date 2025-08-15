@@ -243,6 +243,7 @@ def plot_distance_time_grid(
         grid_size, grid_size, figsize=figsize, sharex=True, sharey=True
     )
     fig.suptitle("Distance Between Gliders Over Time", fontsize=18)
+    combined_summaries = []
 
     for i, g_id in enumerate(glider_names):
         for j, g_b_id in enumerate(glider_names):
@@ -250,6 +251,7 @@ def plot_distance_time_grid(
             comp_df = summaries[g_b_id]
 
             paired_df = find_closest_prof(ref_df, comp_df)
+            combined_summaries.append(paired_df)
 
             ax = axes[i, j]
             if paired_df.empty:
@@ -284,6 +286,7 @@ def plot_distance_time_grid(
         plt.show()
     else:
         plt.close()
+    return pd.concat(combined_summaries, ignore_index=True)
 
 
 #### HEATMAPS ####
@@ -430,6 +433,11 @@ def plot_glider_pair_heatmap_grid(
         for j, g_b in enumerate(glider_names):
             df_a = summaries[g_a]
             df_b = summaries[g_b]
+
+            if g_a == g_b:
+                axes[i, j].set_title(f"{g_a} vs {g_b} (self-comparison)")
+                axes[i, j].axis("off")
+                continue
             ax = axes[i, j]
 
             matches = find_candidate_glider_pairs(
