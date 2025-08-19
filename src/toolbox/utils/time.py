@@ -28,12 +28,22 @@ def safe_median_datetime(x: np.ndarray, axis=None, **kwargs) -> np.datetime64:
 
 
 def add_datetime_secondary_xaxis(ax, position="top", rotation=45):
-    import matplotlib.dates as mdates
-
+    """
+    Add a secondary datetime x-axis (on top) that mirrors the main x-axis ticks and labels.
+    """
+    # Create secondary axis with identity transform
     secax = ax.secondary_xaxis(position, functions=(lambda x: x, lambda x: x))
-    secax.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d"))
-    secax.tick_params(rotation=rotation)
+
+    # Copy tick locator and formatter from the main axis
+    secax.xaxis.set_major_locator(ax.xaxis.get_major_locator())
+    secax.xaxis.set_major_formatter(ax.xaxis.get_major_formatter())
+
+    # Set label and rotation
     secax.set_xlabel("Datetime")
+    secax.tick_params(rotation=rotation)
+
+    # Optional: alignment tweak
     for label in secax.get_xticklabels():
         label.set_ha("left")
+
     return secax
