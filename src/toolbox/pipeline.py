@@ -10,6 +10,7 @@ from toolbox.utils.diagnostics import (
     plot_distance_time_grid,
     plot_glider_pair_heatmap_grid,
 )
+from toolbox.utils.calibration import *
 
 from toolbox.steps import create_step, STEP_CLASSES, STEP_DEPENDENCIES
 from graphviz import Digraph
@@ -189,6 +190,7 @@ class PipelineManager:
         self.alignment_map = {}  # {standard_name: {pipeline_name: alias}}
         self._contexts = None  # stores the result of get_contexts()
         self.settings = {}
+        self._summary_ran = False
 
     def load_mission_control(self, config_path):
         """Load pipeline and alignment configuration from a mission control YAML file."""
@@ -250,6 +252,7 @@ class PipelineManager:
         pd.DataFrame
             Concatenated summary of all glider profiles, with closest match info appended.
         """
+        self._summary_ran = True
         if self._contexts is None:
             raise RuntimeError("Pipelines must be run before generating summaries.")
 
@@ -272,7 +275,7 @@ class PipelineManager:
 
             ds = ds.rename(renamed_vars)
             summary_df = summarising_profiles(ds, pipeline_name)
-            summary_per_glider[pipeline_name] = summary_df
+            self.summary_per_glider[pipeline_name] = summary_df
 
         # Step 2: Find closest profiles across gliders
         # Extract diagnostic flags from settings
@@ -281,7 +284,7 @@ class PipelineManager:
         distance_over_time_matrix = self.settings.get("diagnostics", {}).get(
             "distance_over_time_matrix", False
         )
-        matchup_thresholds = self.settings.get("diagnostics", {}).get(
+        self.matchup_thresholds = self.settings.get("diagnostics", {}).get(
             "matchup_thresholds", {}
         )
         max_time_threshold = (
@@ -306,14 +309,14 @@ class PipelineManager:
                 print("[Pipeline Manager] Plotting distance time grid...")
                 # After generating all summaries...
                 combined_summaries = plot_distance_time_grid(
-                    summaries=summary_per_glider,
+                    summaries=self.summary_per_glider,
                     output_path=self.settings.get("diagnostics", {}).get(
                         "distance_plot_output", None
                     ),
                     show=self.settings.get("diagnostics", {}).get("show_plots", True),
                 )
 
-            if not matchup_thresholds:
+            if not self.matchup_thresholds:
                 print(
                     "[Pipeline Manager] Matchup thresholds are not set. Skipping heatmap grid."
                 )
@@ -322,7 +325,7 @@ class PipelineManager:
                 # compute time taken for caluclations
                 start_time = pd.Timestamp.now()
                 plot_glider_pair_heatmap_grid(
-                    summaries=summary_per_glider,
+                    summaries=self.summary_per_glider,
                     time_bins=np.arange(0, max_time_threshold + 1, bin_size),
                     dist_bins=np.arange(0, max_distance_threshold + 1, bin_size),
                     output_path=self.settings.get("diagnostics", {}).get(
@@ -339,13 +342,44 @@ class PipelineManager:
             print("[Pipeline Manager] Skipping plots.")
             # Generate combined_summaries without plotting
             combined_summaries = []
-            for i, g_id in summary_per_glider.items():
-                for j, g_b_id in summary_per_glider.items():
-                    ref_df = summary_per_glider[g_id]
-                    comp_df = summary_per_glider[g_b_id]
+            for i, g_id in self.summary_per_glider.items():
+                for j, g_b_id in self.summary_per_glider.items():
+                    ref_df = self.summary_per_glider[g_id]
+                    comp_df = self.summary_per_glider[g_b_id]
 
                     paired_df = find_closest_prof(ref_df, comp_df)
                     combined_summaries.append(paired_df)
             combined_summaries = pd.concat(combined_summaries, ignore_index=True)
 
         return
+
+    def align_to_target(self, target="None"):
+        """Align all datasets to a target dataset based on the summaries provided.
+
+        Parameters
+        ----------
+        target : str
+            The name of the target pipeline to align others to.
+
+        """
+        if not self._summary_ran:
+            raise RuntimeError(
+                "PipelineManager.summarise_all_profiles() must be run before alignment."
+            )
+
+        if target not in self.pipelines:
+            raise ValueError(f"Target pipeline '{target}' not found.")
+
+        target_summary = self.summary_per_glider[target]
+
+        # create a matchup df for the target, and every other source
+        for source, source_summary in self.summary_per_glider.items():
+            if source == target:
+                continue
+            print(f"[Pipeline Manager] Aligning '{source}' to target '{target}'...")
+            # Find closest profiles between source and target
+            paired_df = find_closest_prof(source_summary, target_summary)
+            print(
+                f"[Pipeline Manager] Found {len(paired_df)} matched profiles between '{source}' and '{target}'."
+            )
+            # interpolate DEPTH values per profile_id
