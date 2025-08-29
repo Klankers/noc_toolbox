@@ -10,7 +10,12 @@ from toolbox.utils.diagnostics import (
     plot_distance_time_grid,
     plot_glider_pair_heatmap_grid,
 )
-from toolbox.utils.calibration import *
+from toolbox.utils.alignment import (
+    interpolate_DEPTH,
+    aggregate_vars,
+    merge_depth_binned_profiles,
+    compute_r2_for_merged_profiles,
+)
 
 from toolbox.steps import create_step, STEP_CLASSES, STEP_DEPENDENCIES
 from graphviz import Digraph
@@ -258,7 +263,7 @@ class PipelineManager:
 
         print("[Pipeline Manager] Generating glider distance summaries...")
         # Step 1: Generate per-glider summaries
-        summary_per_glider = {}
+        self.summary_per_glider = {}
         for pipeline_name, context in self._contexts.items():
             ds = context["data"]
             if not isinstance(ds, xr.Dataset):
@@ -360,7 +365,6 @@ class PipelineManager:
         ----------
         target : str
             The name of the target pipeline to align others to.
-
         """
         if not self._summary_ran:
             raise RuntimeError(
@@ -372,14 +376,71 @@ class PipelineManager:
 
         target_summary = self.summary_per_glider[target]
 
-        # create a matchup df for the target, and every other source
-        for source, source_summary in self.summary_per_glider.items():
-            if source == target:
+        r2_results_all = []
+
+        # Determine which variables to align
+        alignment_vars = list(self.alignment_map.keys())
+
+        for ancillary_name, ancillary_summary in self.summary_per_glider.items():
+            if ancillary_name == target:
                 continue
-            print(f"[Pipeline Manager] Aligning '{source}' to target '{target}'...")
-            # Find closest profiles between source and target
-            paired_df = find_closest_prof(source_summary, target_summary)
+
             print(
-                f"[Pipeline Manager] Found {len(paired_df)} matched profiles between '{source}' and '{target}'."
+                f"[Pipeline Manager] Aligning '{ancillary_name}' to target '{target}'..."
             )
-            # interpolate DEPTH values per profile_id
+
+            # Step 1: Find matched profile pairs
+            paired_df = find_closest_prof(ancillary_summary, target_summary)
+            paired_df = paired_df.rename(
+                columns={
+                    "glider_a_profile_id": f"{ancillary_name}_profile_id",
+                    "glider_b_profile_id": f"{target}_profile_id",
+                    "glider_b_time_diff": f"time_diff_hr_{ancillary_name}",
+                    "glider_b_distance_km": f"distance_km_{ancillary_name}",
+                }
+            )
+            print(f"[Pipeline Manager] Found {len(paired_df)} matched profiles.")
+
+            if paired_df.empty:
+                continue
+
+            # Step 2: Interpolate and bin all datasets involved
+            binned_dfs = {}
+            for glider_name in [target, ancillary_name]:
+                raw_df = self.summary_per_glider[glider_name].reset_index()
+                df_interp = interpolate_DEPTH(raw_df)
+                df_binned = aggregate_vars(df_interp, alignment_vars)
+                binned_dfs[glider_name] = df_binned
+
+            # Step 3: Merge target + source binned values at depth
+            merged_df = merge_depth_binned_profiles(
+                target_name=target, binned_dfs=binned_dfs
+            )
+
+            # Step 4: Filter merged_df for only profile pairs in matched list
+            merged_df = merged_df[
+                merged_df[f"{target}_profile_id"].isin(
+                    paired_df[f"{target}_profile_id"]
+                )
+                & merged_df[f"{ancillary_name}_profile_id"].isin(
+                    paired_df[f"{ancillary_name}_profile_id"]
+                )
+            ]
+
+            # Step 5: Compute R² per profile-pair for all alignment variables
+            r2_df = compute_r2_for_merged_profiles(
+                merged_df=merged_df,
+                variables=alignment_vars,
+                target_name=target,
+                other_names=[ancillary_name],
+            )
+
+            r2_results_all.append(r2_df)
+
+        # Combine and store
+        final_r2 = (
+            pd.concat(r2_results_all, ignore_index=True)
+            if r2_results_all
+            else pd.DataFrame()
+        )
+        self.r2_alignment_results = final_r2

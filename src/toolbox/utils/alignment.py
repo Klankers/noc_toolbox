@@ -1,7 +1,8 @@
 import pandas as pd
 import numpy as np
+from scipy.stats import pearsonr
 
-from typing import Dict
+from typing import Dict, List
 
 
 def interpolate_DEPTH(df):
@@ -133,3 +134,80 @@ def merge_depth_binned_profiles(
         )
 
     return merged_df
+
+
+def major_axis_r2(x: np.ndarray, y: np.ndarray) -> float:
+    """
+    Compute R² (coefficient of determination) for Major Axis (Type II) regression.
+    R² is simply the square of the Pearson correlation coefficient.
+    """
+    x = np.asarray(x)
+    y = np.asarray(y)
+    mask = ~np.isnan(x) & ~np.isnan(y)
+    x_clean = x[mask]
+    y_clean = y[mask]
+
+    if len(x_clean) < 2:
+        return np.nan  # Not enough points
+
+    r, _ = pearsonr(x_clean, y_clean)
+    return r**2
+
+
+def compute_r2_for_merged_profiles(
+    merged_df: pd.DataFrame,
+    variables: List[str],
+    target_name: str,
+    other_names: List[str],
+) -> pd.DataFrame:
+    """
+    Compute R² values for each variable between target and all other gliders.
+
+    Parameters
+    ----------
+    merged_df : pd.DataFrame
+        Output of merge_depth_binned_profiles()
+
+    variables : list of str
+        List of variable names to compare (e.g., ["salinity", "temperature"])
+
+    target_name : str
+        Name of the target glider (used in suffixes)
+
+    other_names : list of str
+        Other glider names to compare against
+
+    group_columns : list
+        Columns to group by (default: profile_id + DEPTH_bin)
+
+    Returns
+    -------
+    pd.DataFrame
+        One row per target_profile vs comparison_profile pair with R² values for each variable.
+    """
+    results = []
+
+    grouped = merged_df.groupby(
+        [f"{target_name}_profile_id"] + [f"{other}_profile_id" for other in other_names]
+    )
+
+    for keys, group in grouped:
+        row = {f"{target_name}_profile_id": keys[0]}
+        for i, other in enumerate(other_names):
+            row[f"{other}_profile_id"] = keys[i + 1]
+
+        for var in variables:
+            col_target = f"median_{var}_TARGET_{target_name}"
+
+            for other in other_names:
+                col_other = f"median_{var}_{other}"
+                if col_target in group.columns and col_other in group.columns:
+                    x = group[col_target].to_numpy()
+                    y = group[col_other].to_numpy()
+                    row[f"r2_{var}_{other}"] = major_axis_r2(x, y)
+                else:
+                    row[f"r2_{var}_{other}"] = np.nan
+
+        results.append(row)
+
+    return pd.DataFrame(results)
