@@ -3,8 +3,7 @@ import pandas as pd
 import numpy as np
 from scipy.stats import pearsonr
 from geopy.distance import geodesic
-
-from typing import Dict, List
+import matplotlib.pyplot as plt
 
 
 def interpolate_DEPTH(ds: xr.Dataset) -> xr.Dataset:
@@ -191,11 +190,6 @@ def filter_xarray_by_profile_ids(
     print(f"[Filter] {profile_id_var}: {original_size} → {new_size} rows retained.")
 
     return filtered
-
-
-import pandas as pd
-import numpy as np
-from geopy.distance import geodesic
 
 
 def find_profile_pair_metadata(
@@ -519,3 +513,69 @@ def compute_r2_for_merged_profiles_xr(
     # Attach R² variables to original dataset
     ds = ds.assign(results)
     return ds
+
+
+def plot_r2_quality_heatmap(
+    r2_ds: xr.Dataset,
+    ancillary_name: str,
+    target_name: str,
+    r2_thresholds: list[float] = [0.99, 0.95, 0.9, 0.85, 0.8, 0.75, 0.7],
+    variables: list[str] = ["salinity", "temperature", "chla", "bbp", "doxy"],
+    var_labels: list[str] = None,
+    figsize=(10, 6),
+    show: bool = True,
+):
+    """
+    Plot a heatmap of the number of ancillary profiles where R² exceeds thresholds for each variable.
+    """
+
+    if isinstance(r2_ds, xr.Dataset):
+        df = r2_ds.to_dataframe().reset_index()
+    else:
+        raise ValueError("Expected xarray.Dataset as input.")
+
+    if var_labels is None:
+        var_labels = [v.capitalize() for v in variables]
+
+    heatmap = np.zeros((len(variables), len(r2_thresholds)), dtype=int)
+
+    for i, var in enumerate(variables):
+        col = f"r2_{var}_{ancillary_name}"
+        if col not in df.columns:
+            continue
+        for j, threshold in enumerate(r2_thresholds):
+            # Count unique profiles that passed the threshold
+            mask = df[col] >= threshold
+            count = df.loc[mask, f"{ancillary_name}_PROFILE_NUMBER"].nunique()
+            heatmap[i, j] = count
+
+    # Plotting
+    fig, ax = plt.subplots(figsize=figsize)
+    im = ax.imshow(heatmap, cmap="PuBu", aspect="auto")
+
+    ax.set_xticks(np.arange(len(r2_thresholds)))
+    ax.set_xticklabels([f"{t:.2f}" for t in r2_thresholds])
+    ax.set_xlabel("R² Threshold")
+
+    ax.set_yticks(np.arange(len(var_labels)))
+    ax.set_yticklabels(var_labels)
+    ax.set_ylabel("Variable")
+
+    ax.set_title(
+        f"Ancillary Profiles with R² ≥ Threshold ({ancillary_name} vs {target_name})"
+    )
+
+    # Annotate values
+    for i in range(len(variables)):
+        for j in range(len(r2_thresholds)):
+            val = heatmap[i, j]
+            color = "white" if val > heatmap.max() / 2 else "black"
+            ax.text(j, i, str(val), ha="center", va="center", color=color, fontsize=9)
+
+    plt.colorbar(im, ax=ax, label="Count of Profiles")
+    plt.tight_layout()
+
+    if show:
+        plt.show()
+    else:
+        plt.close()
