@@ -10,7 +10,7 @@ pipelines:
 
 alignment:
   variables:
-    Salinity:
+    CNDC:
       aliases:
         Churchill: CNDC
         Doombar: CNDC

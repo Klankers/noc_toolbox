@@ -2,6 +2,7 @@ import xarray as xr
 import pandas as pd
 import numpy as np
 from scipy.stats import pearsonr
+import sys
 
 from typing import Dict, List
 
@@ -47,17 +48,20 @@ def interpolate_DEPTH(ds: xr.Dataset) -> xr.Dataset:
 
     # filter PROFILE_NUMBER > 0
     # (-1 is surfacing behaviour)
-    ds = ds.where(ds["PROFILE_NUMBER"] > 0, drop=True)
+    mask = ds["PROFILE_NUMBER"] > 0
+    ds = ds.sel(N_MEASUREMENTS=mask)
+    # convert to int
+    ds["PROFILE_NUMBER"] = ds["PROFILE_NUMBER"].astype(np.int32)
+    ##### DEV ONLY #####
+    # For debugging, limit to first 20 profiles
+    ds = ds.where(ds["PROFILE_NUMBER"].isin(range(1, 20)), drop=True)
+    print("##### DEV ONLY: Limiting to first 20 profiles for debugging #####")
+    ###################
 
     if "PROFILE_NUMBER" not in ds.coords:
         ds = ds.set_coords("PROFILE_NUMBER")
 
     print("[Pipeline Manager] Interpolating missing DEPTH values by PROFILE_NUMBER...")
-
-    ##### DEV ONLY #####
-    # For debugging, limit to first 3 profiles
-    ds = ds.where(ds["PROFILE_NUMBER"].isin([1, 2, 3]), drop=True)
-    ###################
 
     # Use xarray groupby to interpolate within each profile
     DEPTH_interp = (
@@ -78,131 +82,214 @@ def interpolate_DEPTH(ds: xr.Dataset) -> xr.Dataset:
     ds["DEPTH_bin"] = DEPTH_bin.astype(np.float32)
 
     # Add range label (as a string)
-    bin_start = ds["DEPTH_bin"]
-    bin_end = bin_start + bin_size
     ds["DEPTH_range"] = xr.apply_ufunc(
-        lambda start, end: np.core.defchararray.add(
-            np.char.add(start.astype(int).astype(str), "–"), end.astype(int).astype(str)
+        lambda start, end: (
+            f"{int(start)}–{int(end)}"
+            if not np.isnan(start) and not np.isnan(end)
+            else ""
         ),
-        bin_start,
-        bin_end,
+        ds["DEPTH_bin"],
+        ds["DEPTH_bin"] + bin_size,
         vectorize=True,
-        dask="parallelized",
+        dask="parallelized" if ds.chunks else False,
         output_dtypes=[str],
     )
 
     return ds
 
 
-def aggregate_vars(df, vars_to_aggregate):
-    """Aggregate specified variables by PROFILE_NUMBER and DEPTH_bin.
-
-    Args:
-        df (pd.DataFrame): Input DataFrame with 'PROFILE_NUMBER', 'DEPTH_bin', and variables to aggregate.
-        vars_to_aggregate (list): List of variable names to aggregate.
-
-    Returns:
-        pd.DataFrame: Aggregated DataFrame.
+def aggregate_vars(ds, vars_to_aggregate):
     """
-    if "PROFILE_NUMBER" not in df.columns or "DEPTH_bin" not in df.columns:
-        raise ValueError(
-            "DataFrame must contain 'PROFILE_NUMBER' and 'DEPTH_bin' columns."
-        )
-
-    # Agg over median, with alias of _media{var}
-    print("[Pipeline Manager] Aggregating variables...")
-    agg_dict = {var: "median" for var in vars_to_aggregate}
-    aggregated_df = (
-        df.groupby(["PROFILE_NUMBER", "DEPTH_bin"]).agg(agg_dict).reset_index()
-    )
-    # Rename columns
-    aggregated_df.rename(
-        columns={var: f"median_{var}" for var in vars_to_aggregate}, inplace=True
-    )
-    # sort by PROFILE_NUMBER and DEPTH_bin
-    aggregated_df = aggregated_df.sort_values(by=["PROFILE_NUMBER", "DEPTH_bin"])
-    # drop nulls
-    aggregated_df = aggregated_df.dropna(
-        subset=[f"median_{var}" for var in vars_to_aggregate]
-    )
-    return aggregated_df
-
-
-def merge_depth_binned_profiles(
-    target_name: str, binned_dfs: Dict[str, pd.DataFrame], bin_column: str = "DEPTH_bin"
-) -> pd.DataFrame:
-    """
-    Merge depth-binned profile data for a target glider and multiple others.
+    Aggregate specified variables by PROFILE_NUMBER and DEPTH_bin using xarray only.
 
     Parameters
     ----------
-    target_name : str
-        The name of the target glider (used as the left/base of the join).
+    ds : xr.Dataset
+        Dataset containing 'PROFILE_NUMBER' and 'DEPTH_bin' as coordinates or variables.
 
-    binned_dfs : dict
-        Dictionary of {glider_name: binned_df} where each DataFrame includes
-        'PROFILE_NUMBER' and 'DEPTH_bin', and is the result of interpolate_DEPTH + aggregate_vars.
-
-    bin_column : str
-        The name of the depth bin column to join on.
+    vars_to_aggregate : list of str
+        List of variable names in the dataset to aggregate.
 
     Returns
     -------
-    pd.DataFrame
-        Merged DataFrame with depth-binned values from target and all other gliders,
-        using consistent suffixes like _TARGET_{target_name} and _{glider}.
+    xr.Dataset
+        Dataset with median-aggregated variables named as median_{var},
+        indexed by PROFILE_NUMBER and DEPTH_bin.
     """
-    if target_name not in binned_dfs:
-        raise ValueError(f"Target '{target_name}' not found in binned_dfs.")
-    print("[Pipeline Manager] Merging depth-binned profiles...")
-    # Add glider_PROFILE_NUMBER to each glider's dataframe
-    for name, df in binned_dfs.items():
-        if f"{name}_PROFILE_NUMBER" not in df.columns:
-            binned_dfs[name] = df.copy()
-            binned_dfs[name][f"{name}_PROFILE_NUMBER"] = (
-                df["PROFILE_NUMBER"].astype(str) + f"_{name}"
-            )
+    # Ensure required keys exist
+    if "PROFILE_NUMBER" not in ds:
+        raise ValueError("Dataset must contain 'PROFILE_NUMBER'.")
+    if "DEPTH_bin" not in ds:
+        raise ValueError("Dataset must contain 'DEPTH_bin'.")
 
-    # Use target as base
-    target_df = binned_dfs[target_name].copy()
-    target_profile_col = f"{target_name}_PROFILE_NUMBER"
+    if "PROFILE_NUMBER" not in ds.coords:
+        ds = ds.set_coords("PROFILE_NUMBER")
+    if "DEPTH_bin" not in ds.coords:
+        ds = ds.set_coords("DEPTH_bin")
 
-    # Rename target columns with _TARGET suffix (except join keys)
-    target_df_renamed = target_df.rename(
-        columns={
-            col: f"{col}_TARGET_{target_name}"
-            for col in target_df.columns
-            if col not in [bin_column, "PROFILE_NUMBER", target_profile_col]
-        }
-    )
+    print("[Pipeline Manager] Aggregating variables...")
 
-    # Start with target dataframe as base
-    merged_df = target_df_renamed.copy()
-
-    for glider_name, glider_df in binned_dfs.items():
-        if glider_name == target_name:
+    for var in vars_to_aggregate:
+        if var not in ds:
+            print(f"[Warning] Skipping missing variable: {var}")
+            print(f"[Warning] Available variables: {list(ds.data_vars)}")
             continue
 
-        profile_col = f"{glider_name}_PROFILE_NUMBER"
+        # Group by (PROFILE_NUMBER, DEPTH_bin) and take median
+        grouped = ds[var].groupby(["PROFILE_NUMBER", "DEPTH_bin"])
+        median = grouped.reduce(np.nanmedian)
 
-        # Rename glider columns (excluding join keys)
-        glider_df_renamed = glider_df.rename(
-            columns={
-                col: f"{col}_{glider_name}"
-                for col in glider_df.columns
-                if col not in [bin_column, "PROFILE_NUMBER", profile_col]
-            }
+        # create new variable name
+        new_var_name = f"median_{var}"
+        ds[new_var_name] = median
+        print(f"[Pipeline Manager] Aggregated {var} → {new_var_name}")
+    # drop rows that have any NANs in the aggregated variables
+    agg_vars = [f"median_{var}" for var in vars_to_aggregate if var in ds]
+    ds = ds.dropna(dim="N_MEASUREMENTS", how="any", subset=agg_vars)
+    return ds
+
+
+def filter_xarray_by_profile_ids(
+    ds: xr.Dataset,
+    profile_id_var: str,
+    valid_ids: np.ndarray | list,
+) -> xr.Dataset:
+    """
+    Filters an xarray.Dataset to include only rows with PROFILE_NUMBER in a list of valid IDs.
+
+    Parameters
+    ----------
+    ds : xr.Dataset
+        The dataset to filter.
+
+    profile_id_var : str
+        The name of the variable or coordinate in ds representing the profile ID
+        (e.g., 'PROFILE_NUMBER', 'Doombar_PROFILE_NUMBER', etc.)
+
+    valid_ids : array-like
+        List or array of profile ID values to retain.
+
+    verbose : bool
+        If True, prints the number of rows before and after filtering.
+
+    Returns
+    -------
+    xr.Dataset
+        Filtered dataset containing only rows with matching profile IDs.
+    """
+    if profile_id_var not in ds:
+        raise KeyError(f"'{profile_id_var}' not found in dataset.")
+
+    profile_ids = ds[profile_id_var]
+    print(f"[Filter] Filtering dataset by {len(valid_ids)} valid IDs...")
+
+    mask = profile_ids.isin(valid_ids)
+    filtered = ds.where(mask, drop=True)
+
+    original_size = ds.sizes.get("N_MEASUREMENTS", "unknown")
+    new_size = filtered.sizes.get("N_MEASUREMENTS", "unknown")
+    print(f"[Filter] {profile_id_var}: {original_size} → {new_size} rows retained.")
+
+    return filtered
+
+
+def merge_profile_pairs_on_depth_bin(
+    paired_df: pd.DataFrame,
+    target_ds: xr.Dataset,
+    ancillary_ds: xr.Dataset,
+    target_name: str,
+    ancillary_name: str,
+    bin_dim: str = "DEPTH_bin",
+    max_pairs: int = None,  # for debugging
+) -> xr.Dataset:
+    """
+    Merge binned datasets for each unique (target_profile, ancillary_profile) pair on DEPTH_bin.
+
+    Parameters
+    ----------
+    paired_df : pd.DataFrame
+        DataFrame with columns:
+          - f"{target_name}_PROFILE_NUMBER"
+          - f"{ancillary_name}_PROFILE_NUMBER"
+          - 'time_diff_hr'
+          - 'dist_km'
+
+    target_ds : xr.Dataset
+        Depth-binned and filtered xarray Dataset for target glider.
+
+    ancillary_ds : xr.Dataset
+        Depth-binned and filtered xarray Dataset for ancillary glider.
+
+    target_name : str
+        Target glider name (used for suffixing and column access).
+
+    ancillary_name : str
+        Ancillary glider name (used for suffixing and column access).
+
+    bin_dim : str
+        Dimension to align on (e.g., "DEPTH_bin").
+
+    max_pairs : int, optional
+        If set, limits the number of profile pairs processed (for debugging).
+
+    Returns
+    -------
+    xr.Dataset
+        Combined dataset with one record per (profile_pair, depth_bin), including metadata.
+    """
+
+    merged_list = []
+
+    target_profile_col = f"{target_name}_PROFILE_NUMBER"
+    ancillary_profile_col = f"{ancillary_name}_PROFILE_NUMBER"
+
+    pairs = paired_df[
+        [target_profile_col, ancillary_profile_col, "time_diff_hr", "dist_km"]
+    ]
+
+    if max_pairs is not None:
+        pairs = pairs.head(max_pairs)
+
+    for idx, row in pairs.iterrows():
+        pid_target = row[target_profile_col]
+        pid_anc = row[ancillary_profile_col]
+        time_diff = row["time_diff_hr"]
+        dist = row["dist_km"]
+
+        # Subset each dataset to just the current profile
+        tgt_sel = target_ds.sel(PROFILE_NUMBER=pid_target, drop=True)
+        anc_sel = ancillary_ds.sel(PROFILE_NUMBER=pid_anc, drop=True)
+
+        # Add suffix to avoid var name collisions
+        tgt_sel = tgt_sel.rename(
+            {v: f"{v}_TARGET_{target_name}" for v in tgt_sel.data_vars}
+        )
+        anc_sel = anc_sel.rename(
+            {v: f"{v}_{ancillary_name}" for v in anc_sel.data_vars}
         )
 
-        merged_df = merged_df.merge(
-            glider_df_renamed,
-            how="left",
-            left_on=[target_profile_col, bin_column],
-            right_on=[profile_col, bin_column],
-            suffixes=("", f"_{glider_name}"),
+        # Merge on DEPTH_bin
+        pair_merged = xr.merge(
+            [tgt_sel, anc_sel],
+            join="inner",
+            compat="override",
+            combine_attrs="override",
         )
 
-    return merged_df
+        # Annotate with profile metadata
+        pair_merged = pair_merged.expand_dims("PAIR_INDEX")
+        pair_merged["TARGET_PROFILE_NUMBER"] = pid_target
+        pair_merged["ANCILLARY_PROFILE_NUMBER"] = pid_anc
+        pair_merged["time_diff_hr"] = time_diff
+        pair_merged["dist_km"] = dist
+
+        merged_list.append(pair_merged)
+
+    if not merged_list:
+        raise ValueError("No valid profile-pair merges produced.")
+
+    final_ds = xr.concat(merged_list, dim="PAIR_INDEX")
+    return final_ds
 
 
 def major_axis_r2(x: np.ndarray, y: np.ndarray) -> float:

@@ -13,7 +13,8 @@ from toolbox.utils.diagnostics import (
 from toolbox.utils.alignment import (
     interpolate_DEPTH,
     aggregate_vars,
-    merge_depth_binned_profiles,
+    merge_profile_pairs_on_depth_bin,
+    filter_xarray_by_profile_ids,
     compute_r2_for_merged_profiles,
 )
 
@@ -345,20 +346,22 @@ class PipelineManager:
                     ref_df = self.summary_per_glider[g_id]
                     comp_df = self.summary_per_glider[g_b_id]
 
-                    paired_df = find_closest_prof(ref_df, comp_df)
-                    combined_summaries.append(paired_df)
+                    paired_ds = find_closest_prof(ref_df, comp_df)
+                    combined_summaries.append(paired_ds)
             combined_summaries = pd.concat(combined_summaries, ignore_index=True)
 
         return
 
     def align_to_target(self, target="None"):
-        """Align all datasets to a target dataset based on the summaries provided.
+        """
+        Align all datasets to a target dataset based on the summaries provided.
 
         Parameters
         ----------
         target : str
             The name of the target pipeline to align others to.
         """
+
         if not self._summary_ran:
             raise RuntimeError(
                 "PipelineManager.summarise_all_profiles() must be run before alignment."
@@ -369,10 +372,7 @@ class PipelineManager:
 
         target_data = self._contexts[target]["data"]
 
-        # add summary data to data
-
-        # rename variables in target_data based on alias in alignment_map
-        # Apply alias renaming for alignment vars
+        # Rename variables based on alias map
         renamed_vars = {
             alias: std
             for std, alias_map in self.alignment_map.items()
@@ -380,14 +380,12 @@ class PipelineManager:
         }
         print(f"[Pipeline Manager] Renaming variables: {renamed_vars}")
         target_data = target_data.rename(renamed_vars)
-        target_summary = self.summary_per_glider[target].reset_index()
 
+        target_summary = self.summary_per_glider[target].reset_index()
+        alignment_vars = list(self.alignment_map.keys())
         r2_results_all = []
 
-        # Determine which variables to align
-        alignment_vars = list(self.alignment_map.keys())
-
-        # get all pipeline names and data from self._contexts
+        # Create mapping of all pipeline names to data/summary
         data = {
             name: (ctx["data"], self.summary_per_glider[name])
             for name, ctx in self._contexts.items()
@@ -402,60 +400,54 @@ class PipelineManager:
             )
 
             # Step 1: Find matched profile pairs
-            paired_df = find_closest_prof(ancillary_summary, target_summary)
-            paired_df = paired_df.rename(
-                columns={
-                    "glider_a_PROFILE_NUMBER": f"{ancillary_name}_PROFILE_NUMBER",
-                    "glider_b_PROFILE_NUMBER": f"{target}_PROFILE_NUMBER",
-                    "glider_b_time_diff": f"time_diff_hr_{ancillary_name}",
-                    "glider_b_distance_km": f"distance_km_{ancillary_name}",
-                }
-            )
-            print(f"[Pipeline Manager] Found {len(paired_df)} matched profiles.")
+            paired_ds = find_closest_prof(target_summary, ancillary_summary)
 
-            if paired_df.empty:
+            if paired_ds.empty:
+                print(
+                    f"[Pipeline Manager] No matched profiles found between {target} and {ancillary_name}."
+                )
                 continue
 
-            # Step 2: Interpolate and bin all datasets involved
-            binned_dfs = {}
-            for glider_name, gilder_data in [
+            # Rename profile ID columns for merging
+            paired_ds = paired_ds.rename(
+                columns={
+                    "PROFILE_NUMBER": f"{target}_PROFILE_NUMBER",
+                    "closest_glider_b_profile": f"{ancillary_name}_PROFILE_NUMBER",
+                }
+            )
+            print(f"[Pipeline Manager] Found {len(paired_ds)} matched profiles.")
+            print(
+                f"Unique Pairs: {paired_ds[[f'{target}_PROFILE_NUMBER', f'{ancillary_name}_PROFILE_NUMBER']].drop_duplicates()}"
+            )
+
+            # Step 2: Interpolate + aggregate each dataset
+            binned_ds = {}
+            for glider_name, raw_data in [
                 (target, target_data),
                 (ancillary_name, ancillary_data),
             ]:
                 print(f"[Pipeline Manager] Binning data for {glider_name}...")
-                df_interp = interpolate_DEPTH(gilder_data)
-                df_binned = aggregate_vars(df_interp, alignment_vars)
-                binned_dfs[glider_name] = df_binned
+                ds_interp = interpolate_DEPTH(raw_data)
+                ds_binned = aggregate_vars(ds_interp, alignment_vars)
+                binned_ds[glider_name] = ds_binned
 
-            # Step 3: Merge target + source binned values at depth
-            merged_df = merge_depth_binned_profiles(
-                target_name=target, binned_dfs=binned_dfs
-            )
-
-            # Step 4: Filter merged_df for only profile pairs in matched list
-            merged_df = merged_df[
-                merged_df[f"{target}_PROFILE_NUMBER"].isin(
-                    paired_df[f"{target}_PROFILE_NUMBER"]
+            # Step 3: Filter both datasets before merging
+            filtered_ds = {}
+            for glider_name in [target, ancillary_name]:
+                profile_ids = paired_ds[f"{glider_name}_PROFILE_NUMBER"].values
+                filtered_ds[glider_name] = filter_xarray_by_profile_ids(
+                    ds=binned_ds[glider_name],
+                    profile_id_var="PROFILE_NUMBER",
+                    valid_ids=profile_ids,
                 )
-                & merged_df[f"{ancillary_name}_PROFILE_NUMBER"].isin(
-                    paired_df[f"{ancillary_name}_PROFILE_NUMBER"]
-                )
-            ]
 
-            # Step 5: Compute R² per profile-pair for all alignment variables
-            r2_df = compute_r2_for_merged_profiles(
-                merged_df=merged_df,
-                variables=alignment_vars,
+            # Step 4: Merge datasets at depth bin level
+            merged = merge_profile_pairs_on_depth_bin(
+                paired_df=paired_ds,
+                target_ds=filtered_ds[target],
+                ancillary_ds=filtered_ds[ancillary_name],
                 target_name=target,
-                other_names=[ancillary_name],
+                ancillary_name=ancillary_name,
             )
 
-            r2_results_all.append(r2_df)
-
-        # Combine and store
-        final_r2 = (
-            pd.concat(r2_results_all, ignore_index=True)
-            if r2_results_all
-            else pd.DataFrame()
-        )
-        self.r2_alignment_results = final_r2
+            print(f"[Pipeline Manager] Merged dataset dimensions: {merged.dims}")
