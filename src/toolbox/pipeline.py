@@ -6,7 +6,6 @@ import numpy as np
 import xarray as xr
 from toolbox.utils.diagnostics import (
     summarising_profiles,
-    find_closest_prof,
     plot_distance_time_grid,
     plot_glider_pair_heatmap_grid,
 )
@@ -17,6 +16,7 @@ from toolbox.utils.alignment import (
     filter_xarray_by_profile_ids,
     find_profile_pair_metadata,
     compute_r2_for_merged_profiles_xr,
+    plot_r2_grid_heatmaps,
 )
 
 from toolbox.steps import create_step, STEP_CLASSES, STEP_DEPENDENCIES
@@ -452,3 +452,17 @@ class PipelineManager:
 
             self.r2_datasets[ancillary_name] = r2_ds
             print(f"[Pipeline Manager] Stored R² results for: {ancillary_name}")
+        print("\n[Pipeline Manager] Alignment complete for all datasets.")
+
+        # Set R² thresholds
+        r2_thresholds = [0.99, 0.95, 0.9, 0.85, 0.8, 0.75, 0.7]
+
+        # Call the plotting function
+        plot_r2_grid_heatmaps(
+            r2_datasets=self.r2_datasets,  # dictionary of merged + annotated r² datasets
+            variables=alignment_vars,  # e.g., from self.alignment_map.keys()
+            r2_thresholds=r2_thresholds,  # optional override
+            figsize=(18, 18),  # adjust as needed
+            output_path="r2_heatmap_grid.png",  # or None to skip saving
+            show=True,  # show interactively
+        )

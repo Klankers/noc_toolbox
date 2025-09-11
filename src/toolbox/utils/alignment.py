@@ -49,13 +49,11 @@ def interpolate_DEPTH(ds: xr.Dataset) -> xr.Dataset:
     # (-1 is surfacing behaviour)
     mask = ds["PROFILE_NUMBER"] > 0
     ds = ds.sel(N_MEASUREMENTS=mask)
+
+    
+        ds = ds.sel(PROFILE_NUMBER=range(1,25)) # DEBUG
     # convert to int
     ds["PROFILE_NUMBER"] = ds["PROFILE_NUMBER"].astype(np.int32)
-    ##### DEV ONLY #####
-    # For debugging, limit to first 20 profiles
-    ds = ds.where(ds["PROFILE_NUMBER"].isin(range(1, 20)), drop=True)
-    print("##### DEV ONLY: Limiting to first 20 profiles for debugging #####")
-    ###################
 
     if "PROFILE_NUMBER" not in ds.coords:
         ds = ds.set_coords("PROFILE_NUMBER")
@@ -398,8 +396,8 @@ def merge_profile_pairs_on_depth_bin(
 
         # Annotate with profile metadata
         pair_merged = pair_merged.expand_dims("PAIR_INDEX")
-        pair_merged["TARGET_PROFILE_NUMBER"] = pid_target
-        pair_merged["ANCILLARY_PROFILE_NUMBER"] = pid_anc
+        pair_merged[f"TARGET_{target_name}_PROFILE_NUMBER"] = pid_target
+        pair_merged[f"{ancillary_name}_PROFILE_NUMBER"] = pid_anc
         pair_merged["time_diff_hr"] = time_diff
         pair_merged["dist_km"] = dist
 
@@ -515,67 +513,112 @@ def compute_r2_for_merged_profiles_xr(
     return ds
 
 
-def plot_r2_quality_heatmap(
-    r2_ds: xr.Dataset,
-    ancillary_name: str,
-    target_name: str,
-    r2_thresholds: list[float] = [0.99, 0.95, 0.9, 0.85, 0.8, 0.75, 0.7],
-    variables: list[str] = ["salinity", "temperature", "chla", "bbp", "doxy"],
-    var_labels: list[str] = None,
-    figsize=(10, 6),
-    show: bool = True,
+def plot_r2_grid_heatmaps(
+    r2_datasets,
+    variables,
+    r2_thresholds=[0.99, 0.95, 0.9, 0.85, 0.8, 0.75, 0.7],
+    figsize=(16, 16),
+    output_path=None,
+    show=True,
 ):
     """
-    Plot a heatmap of the number of ancillary profiles where R² exceeds thresholds for each variable.
+    Generate an NxN grid of R² quality threshold heatmaps for each glider pairing.
+
+    Parameters
+    ----------
+    r2_datasets : dict
+        Dictionary with ancillary_name as key and xarray.Dataset as value (R² data per profile pair).
+
+    variables : list of str
+        Alignment variable names (e.g., ['salinity', 'temperature']).
+
+    r2_thresholds : list of float
+        Thresholds to evaluate (defaults to 0.99 → 0.7).
+
+    figsize : tuple
+        Size of the overall figure.
+
+    output_path : str or None
+        If provided, saves the figure.
+
+    show : bool
+        Whether to display the plot.
     """
 
-    if isinstance(r2_ds, xr.Dataset):
-        df = r2_ds.to_dataframe().reset_index()
-    else:
-        raise ValueError("Expected xarray.Dataset as input.")
+    ancillary_names = list(r2_datasets.keys())
+    grid_size = len(ancillary_names)
+    var_labels = [v.capitalize() for v in variables]
 
-    if var_labels is None:
-        var_labels = [v.capitalize() for v in variables]
-
-    heatmap = np.zeros((len(variables), len(r2_thresholds)), dtype=int)
-
-    for i, var in enumerate(variables):
-        col = f"r2_{var}_{ancillary_name}"
-        if col not in df.columns:
-            continue
-        for j, threshold in enumerate(r2_thresholds):
-            # Count unique profiles that passed the threshold
-            mask = df[col] >= threshold
-            count = df.loc[mask, f"{ancillary_name}_PROFILE_NUMBER"].nunique()
-            heatmap[i, j] = count
-
-    # Plotting
-    fig, ax = plt.subplots(figsize=figsize)
-    im = ax.imshow(heatmap, cmap="PuBu", aspect="auto")
-
-    ax.set_xticks(np.arange(len(r2_thresholds)))
-    ax.set_xticklabels([f"{t:.2f}" for t in r2_thresholds])
-    ax.set_xlabel("R² Threshold")
-
-    ax.set_yticks(np.arange(len(var_labels)))
-    ax.set_yticklabels(var_labels)
-    ax.set_ylabel("Variable")
-
-    ax.set_title(
-        f"Ancillary Profiles with R² ≥ Threshold ({ancillary_name} vs {target_name})"
+    fig, axes = plt.subplots(
+        grid_size, grid_size, figsize=figsize, sharex=True, sharey=True
     )
+    fig.suptitle("R² Quality Threshold Coverage Across Glider Pairings", fontsize=18)
 
-    # Annotate values
-    for i in range(len(variables)):
-        for j in range(len(r2_thresholds)):
-            val = heatmap[i, j]
-            color = "white" if val > heatmap.max() / 2 else "black"
-            ax.text(j, i, str(val), ha="center", va="center", color=color, fontsize=9)
+    for i, target_name in enumerate(ancillary_names):
+        for j, ancillary_name in enumerate(ancillary_names):
+            ax = axes[i, j]
 
-    plt.colorbar(im, ax=ax, label="Count of Profiles")
-    plt.tight_layout()
+            if target_name == ancillary_name:
+                ax.axis("off")
+                ax.set_title(f"{target_name} (Self)", fontsize=10)
+                continue
 
-    if show:
+            if ancillary_name not in r2_datasets:
+                ax.set_title("Missing", fontsize=10)
+                ax.axis("off")
+                continue
+
+            ds = r2_datasets[ancillary_name]
+            if not isinstance(ds, xr.Dataset):
+                ax.axis("off")
+                continue
+
+            df = ds.to_dataframe().reset_index()
+            heatmap = np.zeros((len(variables), len(r2_thresholds)), dtype=int)
+
+            for vi, var in enumerate(variables):
+                col = f"r2_{var}_{ancillary_name}"
+                if col not in df.columns:
+                    continue
+                for tj, threshold in enumerate(r2_thresholds):
+                    mask = df[col] >= threshold
+                    count = df.loc[mask, f"{ancillary_name}_PROFILE_NUMBER"].nunique()
+                    heatmap[vi, tj] = count
+
+            im = ax.imshow(heatmap, aspect="auto", cmap="PuBu")
+            ax.set_xticks(np.arange(len(r2_thresholds)))
+            ax.set_xticklabels(
+                [f"{t:.2f}" for t in r2_thresholds], fontsize=8, rotation=45
+            )
+            ax.set_yticks(np.arange(len(variables)))
+            if j == 0:
+                ax.set_yticklabels(var_labels, fontsize=8)
+            else:
+                ax.set_yticklabels([])
+
+            ax.set_title(f"{target_name} vs {ancillary_name}", fontsize=9)
+
+            for vi in range(len(variables)):
+                for tj in range(len(r2_thresholds)):
+                    val = heatmap[vi, tj]
+                    color = "white" if val > heatmap.max() / 2 else "black"
+                    ax.text(
+                        tj,
+                        vi,
+                        str(val),
+                        ha="center",
+                        va="center",
+                        color=color,
+                        fontsize=7,
+                    )
+
+    fig.tight_layout(rect=[0, 0, 1, 0.95])
+    fig.subplots_adjust(hspace=0.3, wspace=0.3)
+
+    if output_path:
+        plt.savefig(output_path, dpi=300)
+        print(f"[Diagnostics] Saved R² heatmap grid to: {output_path}")
+    elif show:
         plt.show()
     else:
         plt.close()
