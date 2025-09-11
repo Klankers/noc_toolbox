@@ -1,6 +1,8 @@
 import xarray as xr
 import pandas as pd
 import numpy as np
+import warnings
+
 from scipy.stats import pearsonr
 from geopy.distance import geodesic
 import matplotlib.pyplot as plt
@@ -49,9 +51,10 @@ def interpolate_DEPTH(ds: xr.Dataset) -> xr.Dataset:
     # (-1 is surfacing behaviour)
     mask = ds["PROFILE_NUMBER"] > 0
     ds = ds.sel(N_MEASUREMENTS=mask)
+    ##### DEV ONLY #####
+    # For debugging, limit to first 20 profiles
+    # ds = ds.where(ds["PROFILE_NUMBER"].isin(range(1, 20)), drop=True)
 
-    
-        ds = ds.sel(PROFILE_NUMBER=range(1,25)) # DEBUG
     # convert to int
     ds["PROFILE_NUMBER"] = ds["PROFILE_NUMBER"].astype(np.int32)
 
@@ -95,55 +98,92 @@ def interpolate_DEPTH(ds: xr.Dataset) -> xr.Dataset:
     return ds
 
 
-def aggregate_vars(ds, vars_to_aggregate):
+def aggregate_vars(
+    ds: xr.Dataset, vars_to_aggregate, profile_dim="PROFILE_NUMBER", bin_dim="DEPTH_bin"
+) -> xr.Dataset:
     """
-    Aggregate specified variables by PROFILE_NUMBER and DEPTH_bin using xarray only.
+    Compute medians per (PROFILE_NUMBER, DEPTH_bin) and return a NEW dataset
+    with variables named 'median_{var}', each shaped (PROFILE_NUMBER, DEPTH_bin).
 
-    Parameters
-    ----------
-    ds : xr.Dataset
-        Dataset containing 'PROFILE_NUMBER' and 'DEPTH_bin' as coordinates or variables.
-
-    vars_to_aggregate : list of str
-        List of variable names in the dataset to aggregate.
-
-    Returns
-    -------
-    xr.Dataset
-        Dataset with median-aggregated variables named as median_{var},
-        indexed by PROFILE_NUMBER and DEPTH_bin.
+    Notes:
+    - This does NOT attach medians back to the raw dataset (which would broadcast
+      onto N_MEASUREMENTS). Use the returned dataset for downstream steps.
+    - Requires that both PROFILE_NUMBER and DEPTH_bin are coordinates aligned
+      to the measurement dimension (typically 'N_MEASUREMENTS').
     """
-    # Ensure required keys exist
-    if "PROFILE_NUMBER" not in ds:
-        raise ValueError("Dataset must contain 'PROFILE_NUMBER'.")
-    if "DEPTH_bin" not in ds:
-        raise ValueError("Dataset must contain 'DEPTH_bin'.")
+    # basic checks
+    if "N_MEASUREMENTS" not in ds.dims:
+        raise ValueError("Expected 'N_MEASUREMENTS' dimension in input dataset.")
+    if profile_dim not in ds:
+        raise ValueError(f"Dataset must contain '{profile_dim}'.")
+    if bin_dim not in ds:
+        raise ValueError(f"Dataset must contain '{bin_dim}'.")
 
-    if "PROFILE_NUMBER" not in ds.coords:
-        ds = ds.set_coords("PROFILE_NUMBER")
-    if "DEPTH_bin" not in ds.coords:
-        ds = ds.set_coords("DEPTH_bin")
+    # ensure the two keys are *coordinates on the measurement axis*
+    # (i.e., both should be 1-D arrays aligned to N_MEASUREMENTS)
+    for key in (profile_dim, bin_dim):
+        if key not in ds.coords:
+            ds = ds.set_coords(key)
+        # sanity: the coord should broadcast to N_MEASUREMENTS (usually same length)
+        if (
+            ds[key].sizes.get("N_MEASUREMENTS", None) is None
+            and ds[key].sizes != ds["N_MEASUREMENTS"].sizes
+        ):
+            # If they aren't aligned to N_MEASUREMENTS, we can't do the multiindex trick.
+            # Raise a clear error so it's easy to diagnose.
+            raise ValueError(
+                f"Coordinate '{key}' must align with 'N_MEASUREMENTS' for aggregation."
+            )
 
-    print("[Pipeline Manager] Aggregating variables...")
-
+    out_vars = {}
     for var in vars_to_aggregate:
         if var not in ds:
-            print(f"[Warning] Skipping missing variable: {var}")
-            print(f"[Warning] Available variables: {list(ds.data_vars)}")
+            print(f"[aggregate_vars] Skipping missing variable: {var}")
             continue
 
-        # Group by (PROFILE_NUMBER, DEPTH_bin) and take median
-        grouped = ds[var].groupby(["PROFILE_NUMBER", "DEPTH_bin"])
-        median = grouped.reduce(np.nanmedian)
+        da = ds[var]
+        # Build a MultiIndex on the measurement axis: (PROFILE_NUMBER, DEPTH_bin)
+        da_mi = da.set_index(N_MEASUREMENTS=(profile_dim, bin_dim))
 
-        # create new variable name
-        new_var_name = f"median_{var}"
-        ds[new_var_name] = median
-        print(f"[Pipeline Manager] Aggregated {var} → {new_var_name}")
-    # drop rows that have any NANs in the aggregated variables
-    agg_vars = [f"median_{var}" for var in vars_to_aggregate if var in ds]
-    ds = ds.dropna(dim="N_MEASUREMENTS", how="any", subset=agg_vars)
-    return ds
+        # Median within each (profile, bin) group across any duplicate measurements
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", category=RuntimeWarning)
+            da_groupmed = da_mi.groupby("N_MEASUREMENTS").median(skipna=True)
+
+        # Unstack back to a dense 2D grid -> dims: (PROFILE_NUMBER, DEPTH_bin)
+        da_2d = da_groupmed.unstack("N_MEASUREMENTS")
+
+        # Ensure nice dim order
+        if (profile_dim, bin_dim) not in [da_2d.dims, da_2d.dims[::-1]]:
+            da_2d = da_2d.transpose(profile_dim, bin_dim)
+
+        out_vars[f"median_{var}"] = da_2d
+
+    if not out_vars:
+        raise ValueError("No variables were aggregated (none found).")
+
+    agg = xr.Dataset(out_vars)
+
+    # (optional) keep PROFILE_NUMBER & DEPTH_bin as coords on the result
+    for key in (profile_dim, bin_dim):
+        if key in ds.coords and key not in agg.coords:
+            agg = agg.assign_coords(
+                {key: ds.coords[key] if key in ds.coords else agg[key]}
+            )
+
+    # (optional) drop all-(NaN) rows/cols across *all* median variables to reduce size
+    # Drop bins that are NaN for every variable
+    all_meds = xr.concat([agg[v] for v in agg.data_vars], dim="__vars__")
+    # drop PROFILE_NUMBERs with all-NaN across all vars/bins
+    mask_prof = all_meds.isnull().all(dim=["__vars__", bin_dim])
+    if mask_prof.any():
+        agg = agg.sel({profile_dim: ~mask_prof})
+    # drop DEPTH_bin with all-NaN across all vars/profiles
+    mask_bin = all_meds.isnull().all(dim=["__vars__", profile_dim])
+    if mask_bin.any():
+        agg = agg.sel({bin_dim: ~mask_bin})
+
+    return agg
 
 
 def filter_xarray_by_profile_ids(
@@ -152,41 +192,45 @@ def filter_xarray_by_profile_ids(
     valid_ids: np.ndarray | list,
 ) -> xr.Dataset:
     """
-    Filters an xarray.Dataset to include only rows with PROFILE_NUMBER in a list of valid IDs.
-
-    Parameters
-    ----------
-    ds : xr.Dataset
-        The dataset to filter.
-
-    profile_id_var : str
-        The name of the variable or coordinate in ds representing the profile ID
-        (e.g., 'PROFILE_NUMBER', 'Doombar_PROFILE_NUMBER', etc.)
-
-    valid_ids : array-like
-        List or array of profile ID values to retain.
-
-    verbose : bool
-        If True, prints the number of rows before and after filtering.
-
-    Returns
-    -------
-    xr.Dataset
-        Filtered dataset containing only rows with matching profile IDs.
+    Filter an xarray.Dataset to keep only rows / entries with profile IDs in `valid_ids`.
+    Works for both raw (with N_MEASUREMENTS) and aggregated (PROFILE_NUMBER as a dim) datasets.
     """
-    if profile_id_var not in ds:
-        raise KeyError(f"'{profile_id_var}' not found in dataset.")
+    if (
+        profile_id_var not in ds
+        and profile_id_var not in ds.coords
+        and profile_id_var not in ds.dims
+    ):
+        raise KeyError(
+            f"'{profile_id_var}' not found as a variable/coord/dim in dataset."
+        )
 
-    profile_ids = ds[profile_id_var]
-    print(f"[Filter] Filtering dataset by {len(valid_ids)} valid IDs...")
+    # Normalize ids to dataset coord dtype (avoid float->int mismatches from pandas)
+    if profile_id_var in ds.coords:
+        coord_dtype = ds[profile_id_var].dtype
+    elif profile_id_var in ds.dims:
+        coord_dtype = ds[
+            profile_id_var
+        ].dtype  # xarray exposes dim coord dtype via coords of same name if present
+    else:
+        # fallback if it's only a data_var
+        coord_dtype = ds[profile_id_var].dtype
 
-    mask = profile_ids.isin(valid_ids)
-    filtered = ds.where(mask, drop=True)
+    ids = np.asarray(valid_ids).astype(coord_dtype, copy=False)
 
-    original_size = ds.sizes.get("N_MEASUREMENTS", "unknown")
-    new_size = filtered.sizes.get("N_MEASUREMENTS", "unknown")
-    print(f"[Filter] {profile_id_var}: {original_size} → {new_size} rows retained.")
+    # Keep only IDs that actually exist (prevents KeyError on .sel)
+    present = np.intersect1d(ds[profile_id_var].values, ids)
+    print(
+        f"[Filter] Aggregated case: {len(ds[profile_id_var])} → {len(present)} profiles retained."
+    )
 
+    if present.size == 0:
+        # Return empty along the profile dimension, preserving structure
+        return ds.isel({profile_id_var: slice(0, 0)})
+
+    # Select profiles (order follows `present`; if you want to preserve the order of `valid_ids`,
+    # use `wanted = [i for i in ids if i in set(present)]` instead)
+    filtered = ds.sel({profile_id_var: present})
+    print(f"[Filter] Resulting dims: {filtered.dims}")
     return filtered
 
 
@@ -294,120 +338,92 @@ def find_profile_pair_metadata(
     ].reset_index(drop=True)
 
 
-def merge_profile_pairs_on_depth_bin(
-    paired_df: pd.DataFrame,
-    target_ds: xr.Dataset,
-    ancillary_ds: xr.Dataset,
+def merge_pairs_from_filtered_aggregates(
+    paired_df,
+    agg_target: xr.Dataset,
+    agg_anc: xr.Dataset,
     target_name: str,
     ancillary_name: str,
+    variables,  # e.g. ["TEMP","CNDC","CHLA",...]
     bin_dim: str = "DEPTH_bin",
-    max_pairs: int = None,  # for debugging
+    pair_dim: str = "PAIR_INDEX",
 ) -> xr.Dataset:
     """
-    Merge binned datasets for each unique (target_profile, ancillary_profile) pair on DEPTH_bin.
-
-    Parameters
-    ----------
-    paired_df : pd.DataFrame
-        DataFrame with columns:
-          - f"{target_name}_PROFILE_NUMBER"
-          - f"{ancillary_name}_PROFILE_NUMBER"
-          - 'time_diff_hr'
-          - 'dist_km'
-
-    target_ds : xr.Dataset
-        Depth-binned and filtered xarray Dataset for target glider.
-
-    ancillary_ds : xr.Dataset
-        Depth-binned and filtered xarray Dataset for ancillary glider.
-
-    target_name : str
-        Target glider name (used for suffixing and column access).
-
-    ancillary_name : str
-        Ancillary glider name (used for suffixing and column access).
-
-    bin_dim : str
-        Dimension to align on (e.g., "DEPTH_bin").
-
-    max_pairs : int, optional
-        If set, limits the number of profile pairs processed (for debugging).
-
-    Returns
-    -------
-    xr.Dataset
-        Combined dataset with one record per (profile_pair, depth_bin), including metadata.
+    Build a dataset with one row per (target_profile, ancillary_profile, depth_bin).
+    Each row has: target/ancillary profile IDs, time/distance diffs, and median_{var} for both sides.
     """
+    tgt_id_col = f"{target_name}_PROFILE_NUMBER"
+    anc_id_col = f"{ancillary_name}_PROFILE_NUMBER"
 
-    merged_list = []
+    # Make sure PROFILE_NUMBER is the dimension we select on
+    if "PROFILE_NUMBER" not in agg_target.dims or "PROFILE_NUMBER" not in agg_anc.dims:
+        raise ValueError("Expected aggregated datasets with dim 'PROFILE_NUMBER'.")
 
-    target_profile_col = f"{target_name}_PROFILE_NUMBER"
-    ancillary_profile_col = f"{ancillary_name}_PROFILE_NUMBER"
+    # pre-cast ids for safe selection
+    agg_target = agg_target.assign_coords(
+        PROFILE_NUMBER=agg_target.PROFILE_NUMBER.astype("int32")
+    )
+    agg_anc = agg_anc.assign_coords(
+        PROFILE_NUMBER=agg_anc.PROFILE_NUMBER.astype("int32")
+    )
 
-    pairs = paired_df[
-        [target_profile_col, ancillary_profile_col, "time_diff_hr", "dist_km"]
-    ]
+    out = []
 
-    if max_pairs is not None:
-        pairs = pairs.head(max_pairs)
+    # restrict to just the columns we need
+    pairs = paired_df[[tgt_id_col, anc_id_col, "time_diff_hr", "dist_km"]]
 
-    for idx, row in pairs.iterrows():
-        # Ensure integer type to match xarray index dtype
-        pid_target = int(row[target_profile_col])
-        pid_anc = int(row[ancillary_profile_col])
-        time_diff = row["time_diff_hr"]
-        dist = row["dist_km"]
+    for pair_idx, row in pairs.reset_index(drop=True).iterrows():
+        pid_t = int(row[tgt_id_col])
+        pid_a = int(row[anc_id_col])
 
-        if pid_target not in target_ds["PROFILE_NUMBER"].values:
-            print(f"[Skip] Target profile {pid_target} not in dataset.")
+        # skip if either profile missing
+        if (
+            pid_t not in agg_target["PROFILE_NUMBER"].values
+            or pid_a not in agg_anc["PROFILE_NUMBER"].values
+        ):
             continue
 
-        if pid_anc not in ancillary_ds["PROFILE_NUMBER"].values:
-            print(f"[Skip] Ancillary profile {pid_anc} not in dataset.")
+        # select per-profile slabs (dims: DEPTH_bin)
+        t = agg_target.sel(PROFILE_NUMBER=pid_t)
+        a = agg_anc.sel(PROFILE_NUMBER=pid_a)
+
+        # keep only requested median variables that exist
+        t_keep = [f"median_{v}" for v in variables if f"median_{v}" in t]
+        a_keep = [f"median_{v}" for v in variables if f"median_{v}" in a]
+        if not t_keep or not a_keep:
             continue
+        t = t[t_keep]
+        a = a[a_keep]
 
-        tgt_sel = target_ds.sel(PROFILE_NUMBER=pid_target, drop=True)
-        anc_sel = ancillary_ds.sel(PROFILE_NUMBER=pid_anc, drop=True)
+        # align on common depth bins
+        common_bins = np.intersect1d(t[bin_dim].values, a[bin_dim].values)
+        if common_bins.size == 0:
+            continue
+        t = t.sel({bin_dim: common_bins})
+        a = a.sel({bin_dim: common_bins})
 
-        # Add suffix to avoid var name collisions
-        tgt_sel = tgt_sel.rename(
-            {v: f"{v}_TARGET_{target_name}" for v in tgt_sel.data_vars}
-        )
-        anc_sel = anc_sel.rename(
-            {v: f"{v}_{ancillary_name}" for v in anc_sel.data_vars}
-        )
+        # suffix variable names
+        t = t.rename({v: f"{v}_TARGET_{target_name}" for v in t.data_vars})
+        a = a.rename({v: f"{v}_{ancillary_name}" for v in a.data_vars})
 
-        def drop_measurements_dim(ds: xr.Dataset) -> xr.Dataset:
-            if "N_MEASUREMENTS" in ds.dims:
-                return ds.drop_dims("N_MEASUREMENTS")
-            return ds
-
-        # Apply
-        tgt_sel = drop_measurements_dim(tgt_sel)
-        anc_sel = drop_measurements_dim(anc_sel)
-
-        # Merge on DEPTH_bin
-        pair_merged = xr.merge(
-            [tgt_sel, anc_sel],
-            join="inner",
-            compat="override",
-            combine_attrs="override",
+        # merge the two sides (only bin_dim left)
+        pair = xr.merge(
+            [t, a], join="exact", compat="override", combine_attrs="override"
         )
 
-        # Annotate with profile metadata
-        pair_merged = pair_merged.expand_dims("PAIR_INDEX")
-        pair_merged[f"TARGET_{target_name}_PROFILE_NUMBER"] = pid_target
-        pair_merged[f"{ancillary_name}_PROFILE_NUMBER"] = pid_anc
-        pair_merged["time_diff_hr"] = time_diff
-        pair_merged["dist_km"] = dist
+        # annotate pair metadata on a new pair dimension
+        pair = pair.expand_dims({pair_dim: [pair_idx]})
+        pair[f"TARGET_{target_name}_PROFILE_NUMBER"] = (pair_dim, [pid_t])
+        pair[f"{ancillary_name}_PROFILE_NUMBER"] = (pair_dim, [pid_a])
+        pair["time_diff_hr"] = (pair_dim, [float(row["time_diff_hr"])])
+        pair["dist_km"] = (pair_dim, [float(row["dist_km"])])
 
-        merged_list.append(pair_merged)
+        out.append(pair)
 
-    if not merged_list:
-        raise ValueError("No valid profile-pair merges produced.")
+    if not out:
+        raise ValueError("No valid pairs produced during merge.")
 
-    final_ds = xr.concat(merged_list, dim="PAIR_INDEX")
-    return final_ds
+    return xr.concat(out, dim=pair_dim)
 
 
 def major_axis_r2_xr(x: xr.DataArray, y: xr.DataArray) -> float:

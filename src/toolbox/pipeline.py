@@ -12,7 +12,7 @@ from toolbox.utils.diagnostics import (
 from toolbox.utils.alignment import (
     interpolate_DEPTH,
     aggregate_vars,
-    merge_profile_pairs_on_depth_bin,
+    merge_pairs_from_filtered_aggregates,
     filter_xarray_by_profile_ids,
     find_profile_pair_metadata,
     compute_r2_for_merged_profiles_xr,
@@ -428,15 +428,18 @@ class PipelineManager:
                     valid_ids=profile_ids,
                 )
 
-            # === STEP 4: Merge on Depth Bins per Profile Pair ===
-            print(f"[Pipeline Manager] Merging profile pairs...")
-            merged = merge_profile_pairs_on_depth_bin(
+            # Step 4: Build pairwise merged dataset (no N_MEASUREMENTS anywhere)
+            merged = merge_pairs_from_filtered_aggregates(
                 paired_df=paired_df,
-                target_ds=filtered_ds[target],
-                ancillary_ds=filtered_ds[ancillary_name],
+                agg_target=filtered_ds[target],
+                agg_anc=filtered_ds[ancillary_name],
                 target_name=target,
                 ancillary_name=ancillary_name,
+                variables=alignment_vars,  # the raw names; helper will use median_{var}
             )
+
+            print("[Align] Merged dims:", merged.dims)
+            print("[Align] Vars:", list(merged.data_vars))
 
             print(f"[Pipeline Manager] Merged dataset dimensions: {merged.dims}")
             print(f"Merged Variables: {list(merged.data_vars)}")
