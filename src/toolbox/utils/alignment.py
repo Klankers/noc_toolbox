@@ -38,7 +38,6 @@ def interpolate_DEPTH(ds: xr.Dataset) -> xr.Dataset:
         )
 
     # Interpolate missing values per PROFILE_NUMBER
-    # Approach: loop over unique profile numbers using xarray vectorized selection
     if "DEPTH" not in ds:
         raise ValueError("DEPTH not found in dataset.")
 
@@ -51,9 +50,6 @@ def interpolate_DEPTH(ds: xr.Dataset) -> xr.Dataset:
     # (-1 is surfacing behaviour)
     mask = ds["PROFILE_NUMBER"] > 0
     ds = ds.sel(N_MEASUREMENTS=mask)
-    ##### DEV ONLY #####
-    # For debugging, limit to first 20 profiles
-    # ds = ds.where(ds["PROFILE_NUMBER"].isin(range(1, 20)), drop=True)
 
     # convert to int
     ds["PROFILE_NUMBER"] = ds["PROFILE_NUMBER"].astype(np.int32)
@@ -129,8 +125,6 @@ def aggregate_vars(
             ds[key].sizes.get("N_MEASUREMENTS", None) is None
             and ds[key].sizes != ds["N_MEASUREMENTS"].sizes
         ):
-            # If they aren't aligned to N_MEASUREMENTS, we can't do the multiindex trick.
-            # Raise a clear error so it's easy to diagnose.
             raise ValueError(
                 f"Coordinate '{key}' must align with 'N_MEASUREMENTS' for aggregation."
             )
@@ -171,7 +165,6 @@ def aggregate_vars(
                 {key: ds.coords[key] if key in ds.coords else agg[key]}
             )
 
-    # (optional) drop all-(NaN) rows/cols across *all* median variables to reduce size
     # Drop bins that are NaN for every variable
     all_meds = xr.concat([agg[v] for v in agg.data_vars], dim="__vars__")
     # drop PROFILE_NUMBERs with all-NaN across all vars/bins
@@ -227,8 +220,7 @@ def filter_xarray_by_profile_ids(
         # Return empty along the profile dimension, preserving structure
         return ds.isel({profile_id_var: slice(0, 0)})
 
-    # Select profiles (order follows `present`; if you want to preserve the order of `valid_ids`,
-    # use `wanted = [i for i in ids if i in set(present)]` instead)
+    # Select profiles (order follows `present`;
     filtered = ds.sel({profile_id_var: present})
     print(f"[Filter] Resulting dims: {filtered.dims}")
     return filtered
