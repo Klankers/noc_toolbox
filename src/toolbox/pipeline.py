@@ -338,7 +338,7 @@ class PipelineManager:
 
         return
 
-    def align_to_target(self, target="None"):
+    def preview_alignment(self, target="None"):
         """
         Align all datasets to a target dataset and compute R² against ancillary sources.
 
@@ -458,7 +458,9 @@ class PipelineManager:
         print("\n[Pipeline Manager] Alignment complete for all datasets.")
 
         # Set R² thresholds
-        r2_thresholds = [0.99, 0.95, 0.9, 0.85, 0.8, 0.75, 0.7]
+        r2_thresholds = self.settings.get("alignment", {}).get(
+            "r2_thresholds", [0.99, 0.95, 0.9, 0.85, 0.8, 0.75, 0.7]
+        )
 
         # Call the plotting function
         # r2_datasets produced by align_to_target
@@ -474,6 +476,9 @@ class PipelineManager:
             .get("matchup_thresholds", {})
             .get("max_distance_threshold", 20),
             figsize=(9, 6),
-            output_dir="pair_heatmaps",  # one PNG per ancillary in this folder
-            show=True,
+            save_plots=self.settings.get("alignment", {}).get("save_plots", False),
+            output_path=self.settings.get("alignment", {}).get(
+                "plot_output_path", "r2_heatmap_grid.png"
+            ),
+            show_plots=self.settings.get("alignment", {}).get("show_plots", True),
         )

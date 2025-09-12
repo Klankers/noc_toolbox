@@ -530,8 +530,9 @@ def plot_r2_heatmaps_per_pair(
     time_thresh_hr=None,  # e.g. 5 to filter by time ≤ 5 hr
     dist_thresh_km=None,  # e.g. 10 to filter by dist ≤ 10 km
     figsize=(9, 6),
-    output_dir=None,  # directory to save one PNG per pairing
-    show=True,
+    save_plots=False,
+    output_path=None,  # directory to save plots if save_plots is True
+    show_plots=True,
 ):
     """
     Create ONE heatmap per ancillary pairing showing counts of unique ancillary profiles
@@ -633,14 +634,20 @@ def plot_r2_heatmaps_per_pair(
         plt.tight_layout()
 
         # Save or show
-        if output_dir:
-            os.makedirs(output_dir, exist_ok=True)
+        if save_plots:
+            # if output_path is a file, use its directory
+            if output_path is not None and not os.path.isdir(output_path):
+                output_path = os.path.dirname(output_path)
+            if output_path is None or output_path == "":
+                output_path = "."
+            # ensure directory exists
+            os.makedirs(output_path, exist_ok=True)
             fname = f"r2_heatmap_{title_target}_vs_{ancillary_name}.png"
-            path = os.path.join(output_dir, fname)
+            path = os.path.join(output_path, fname)
             plt.savefig(path, dpi=300)
             print(f"[Plot] Saved: {path}")
 
-        if show:
+        if show_plots:
             plt.show()
         else:
             plt.close(fig)
