@@ -3,9 +3,11 @@ import pandas as pd
 import numpy as np
 import warnings
 import os
+import datetime as _dt
 
 from scipy.stats import pearsonr
 from geopy.distance import geodesic
+from sklearn.linear_model import LinearRegression
 import matplotlib.pyplot as plt
 
 
@@ -651,3 +653,393 @@ def plot_r2_heatmaps_per_pair(
             plt.show()
         else:
             plt.close(fig)
+
+
+def collect_xy_from_r2_ds(
+    r2_ds,
+    var,
+    target_name,
+    ancillary_name,
+    r2_min=None,
+    time_max=None,
+    dist_max=None,
+):
+    """
+    From an R² dataset (one ancillary), collect all (x=ancillary, y=target) binned points
+    for a given variable across selected profile pairs, flattening PAIR_INDEX×DEPTH_bin.
+
+    Returns: x, y (1D np.ndarrays)
+    """
+    y_name = f"median_{var}_TARGET_{target_name}"
+    x_name = f"median_{var}_{ancillary_name}"
+    r2_name = f"r2_{var}_{ancillary_name}"
+
+    # Sanity checks
+    for need in [x_name, y_name]:
+        if need not in r2_ds:
+            return np.array([]), np.array([])
+
+    # Build a boolean mask over PAIR_INDEX
+    n_pairs = r2_ds.sizes.get("PAIR_INDEX", 0)
+    if n_pairs == 0:
+        return np.array([]), np.array([])
+
+    mask = xr.DataArray(
+        np.ones(n_pairs, dtype=bool),
+        dims=["PAIR_INDEX"],
+        coords={"PAIR_INDEX": r2_ds["PAIR_INDEX"]},
+    )
+
+    if (r2_min is not None) and (r2_name in r2_ds):
+        mask = mask & (r2_ds[r2_name] >= float(r2_min))
+
+    if (time_max is not None) and ("time_diff_hr" in r2_ds):
+        mask = mask & (r2_ds["time_diff_hr"] <= float(time_max))
+
+    if (dist_max is not None) and ("dist_km" in r2_ds):
+        mask = mask & (r2_ds["dist_km"] <= float(dist_max))
+
+    # Select pairs and flatten PAIR_INDEX×DEPTH_bin to 1D
+    X = r2_ds[x_name].where(mask, drop=True).values.reshape(-1)
+    Y = r2_ds[y_name].where(mask, drop=True).values.reshape(-1)
+
+    m = np.isfinite(X) & np.isfinite(Y)
+    return X[m], Y[m]
+
+
+def fit_linear_map(x, y):
+    """
+    Fit y = slope * x + intercept using sklearn LinearRegression.
+    Returns dict with slope, intercept, R² (model score), and n.
+    """
+    x = np.asarray(x)
+    y = np.asarray(y)
+    m = np.isfinite(x) & np.isfinite(y)
+    x = x[m]
+    y = y[m]
+    if x.size < 2:
+        return {"slope": np.nan, "intercept": np.nan, "r2": np.nan, "n": int(x.size)}
+    X = x.reshape(-1, 1)
+    model = LinearRegression().fit(X, y)
+    return {
+        "slope": float(model.coef_[0]),
+        "intercept": float(model.intercept_),
+        "r2": float(model.score(X, y)),
+        "n": int(x.size),
+    }
+
+
+def plot_pair_scatter_grid(
+    r2_datasets,
+    variables,
+    target_name,
+    variable_r2_criteria=None,
+    max_time_hr=None,
+    max_dist_km=None,
+    ancillaries_order=None,
+    figsize=None,
+    point_alpha=0.6,
+    point_size=8,
+    equal_axes=True,  # new: keep x/y scales identical per panel
+):
+    """
+    Grid of scatter plots: rows = ancillary, cols = variables.
+    Each panel: ancillary median_{var} vs target median_{var}, all depth bins from
+    pairs that pass R²/time/distance filters. Plots 1:1 and fitted line.
+    """
+    ancillaries = (
+        list(ancillaries_order) if ancillaries_order else list(r2_datasets.keys())
+    )
+    n_rows, n_cols = len(ancillaries), len(variables)
+    if figsize is None:
+        figsize = (4.0 * n_cols, 3.5 * n_rows)
+
+    fig, axes = plt.subplots(
+        n_rows, n_cols, figsize=figsize, squeeze=False, sharex=False, sharey=False
+    )
+    fig.suptitle(
+        f"Ancillary vs Target ({target_name}) — depth-aligned medians with linear fits",
+        fontsize=14,
+    )
+
+    # Simple type probe for guard
+    _any_ds = next(iter(r2_datasets.values())) if r2_datasets else None
+    _ds_type = type(_any_ds)
+
+    for i, anc in enumerate(ancillaries):
+        if anc not in r2_datasets or not isinstance(r2_datasets[anc], _ds_type):
+            for j in range(n_cols):
+                ax = axes[i, j]
+                ax.axis("off")
+                ax.set_title(f"{anc} (no data)")
+            continue
+
+        ds = r2_datasets[anc]
+        pair_mask = np.ones(ds.sizes.get("PAIR_INDEX", 0), dtype=bool)
+        if "time_diff_hr" in ds and max_time_hr is not None:
+            pair_mask &= ds["time_diff_hr"].values <= max_time_hr
+        if "dist_km" in ds and max_dist_km is not None:
+            pair_mask &= ds["dist_km"].values <= max_dist_km
+        all_pairs = (
+            ds["PAIR_INDEX"].values
+            if "PAIR_INDEX" in ds.coords
+            else np.array([], dtype=int)
+        )
+
+        for j, var in enumerate(variables):
+            ax = axes[i, j]
+            anc_var = f"median_{var}_{anc}"
+            tgt_var = f"median_{var}_TARGET_{target_name}"
+            r2_var = f"r2_{var}_{anc}"
+
+            if anc_var not in ds or tgt_var not in ds or r2_var not in ds:
+                ax.axis("off")
+                ax.set_title(f"{anc} — {var} (missing)")
+                continue
+
+            # Per-variable R² threshold
+            r2_thresh = (
+                None
+                if variable_r2_criteria is None
+                else variable_r2_criteria.get(var, None)
+            )
+            r2_mask = np.ones_like(pair_mask, dtype=bool)
+            if r2_thresh is not None:
+                r2_mask &= ds[r2_var].values >= r2_thresh
+
+            valid_pairs = all_pairs[pair_mask & r2_mask]
+            if valid_pairs.size == 0:
+                ax.axis("off")
+                ax.set_title(f"{anc} — {var} (no pairs)")
+                continue
+
+            # x: ancillary, y: target
+            x = ds[anc_var].sel(PAIR_INDEX=valid_pairs).values.ravel()
+            y = ds[tgt_var].sel(PAIR_INDEX=valid_pairs).values.ravel()
+
+            m = np.isfinite(x) & np.isfinite(y)
+            x, y = x[m], y[m]
+            n = x.size
+            if n == 0:
+                ax.axis("off")
+                ax.set_title(f"{anc} — {var} (no valid points)")
+                continue
+
+            ax.scatter(x, y, s=point_size, alpha=point_alpha, edgecolor="k")
+
+            # 1:1 line & limits
+            lo = min(np.nanmin(x), np.nanmin(y))
+            hi = max(np.nanmax(x), np.nanmax(y))
+            if np.isfinite(lo) and np.isfinite(hi) and hi > lo:
+                if equal_axes:
+                    ax.set_xlim(lo, hi)
+                    ax.set_ylim(lo, hi)
+                ax.plot([lo, hi], [lo, hi], linestyle="--", color="red")
+
+            # Fit y = a*x + b
+            eq = f"N={n} (no fit)"
+            if n >= 2 and np.any(x != x[0]):
+                model = LinearRegression()
+                model.fit(x.reshape(-1, 1), y)
+                slope = float(model.coef_[0])
+                intercept = float(model.intercept_)
+                r2 = float(model.score(x.reshape(-1, 1), y))
+                xline = np.linspace(ax.get_xlim()[0], ax.get_xlim()[1], 100)
+                yline = slope * xline + intercept
+                ax.plot(xline, yline, color="green", linewidth=1.5)
+                eq = f"y = {slope:.2f}x + {intercept:.2f}\nFitted R²={r2:.2f}, N={n}"
+
+            # Labels & titles
+            if i == 0:
+                ax.set_title(var)
+            if j == 0:
+                ax.set_ylabel(f"{target_name} {var}")  # target on Y
+            ax.set_xlabel(f"{anc} {var}")  # ancillary on X
+            ax.grid(True, alpha=0.3)
+            ax.text(
+                0.02,
+                0.98,
+                eq,
+                transform=ax.transAxes,
+                va="top",
+                ha="left",
+                fontsize=8,
+                bbox=dict(boxstyle="round,pad=0.2", fc="w", ec="0.8", alpha=0.8),
+            )
+
+    fig.tight_layout(rect=[0, 0, 1, 0.95])
+    return fig, axes
+
+
+def apply_linear_map_to_da(da, slope, intercept, out_name=None):
+    """
+    Apply y = slope * da + intercept to an xarray.DataArray.
+    Returns a new DataArray (optionally renamed).
+    """
+    if not np.isfinite(slope) or not np.isfinite(intercept):
+        return da * np.nan
+    out = slope * da + intercept
+    if out_name:
+        out = out.rename(out_name)
+    return out
+
+
+def fit_and_save_to_target(
+    self,
+    target,
+    out_dir,
+    variable_r2_criteria=None,  # e.g. {"TEMP":0.9, "CNDC":0.85, ...}; falls back to self.settings if None
+    max_time_hr=None,  # optional extra filters on pairs when collecting training points
+    max_dist_km=None,
+    ancillaries=None,  # list[str] to restrict which sources to fit; default = all except target
+    overwrite=False,
+    show_plots=True,  # quick QA using your existing scatter grid
+):
+    """
+    For each ancillary source:
+      - Collect all (ancillary, target) depth-binned points passing thresholds from self.r2_datasets[anc]
+      - Fit linear maps (y = slope*x + intercept) for each alignment var
+      - Apply those maps to the *full* ancillary dataset variables
+      - Save aligned ancillary dataset to NetCDF.
+
+    Produces variables named `{var}_ALIGNED_TO_{target}` in the saved files.
+    """
+    if not getattr(self, "r2_datasets", None):
+        raise RuntimeError(
+            "Run preview_alignment() (which populates self.r2_datasets) before fitting."
+        )
+    if target not in self.pipelines or target not in self._contexts:
+        raise ValueError(f"Target '{target}' not available in manager contexts.")
+
+    # Vars to fit & thresholds
+    alignment_vars = list(self.alignment_map.keys())
+    if variable_r2_criteria is None:
+        variable_r2_criteria = self.settings.get("alignment", {}).get(
+            "variable_r2_criteria", {}
+        )
+    missing = [v for v in alignment_vars if v not in variable_r2_criteria]
+    if missing:
+        raise ValueError(f"Missing R² thresholds for variables: {missing}")
+
+    os.makedirs(out_dir, exist_ok=True)
+
+    # Which ancillaries?
+    all_sources = [n for n in self.pipelines.keys() if n != target]
+    anc_list = list(ancillaries) if ancillaries else all_sources
+
+    # Optional QA plots before/after
+    if show_plots and hasattr(self, "plot_pair_scatter_grid"):
+        try:
+            plot_pair_scatter_grid(
+                r2_datasets=self.r2_datasets,
+                variables=alignment_vars,
+                target_name=target,
+                variable_r2_criteria=variable_r2_criteria,
+                max_time_hr=max_time_hr,
+                max_dist_km=max_dist_km,
+            )
+        except Exception as e:
+            print(f"[Fit] (Plot) Skipped grid due to: {e}")
+
+    # Helper: alias→std rename for each source so {var} exists consistently
+    def _alias_map_for(source_name):
+        # alignment_map: {std_var: {glider_name: alias_name}}
+        return {
+            alias: std
+            for std, mapping in self.alignment_map.items()
+            if (alias := mapping.get(source_name))
+        }
+
+    saved_paths = {}
+    fits_summary = {}  # fits_summary[anc][var] = dict(slope, intercept, r2, n)
+
+    for anc in anc_list:
+        if anc not in self._contexts:
+            print(f"[Fit] Skipping '{anc}' (no context).")
+            continue
+
+        print(f"\n[Fit] === {anc} → align to {target} ===")
+        r2_ds = self.r2_datasets.get(anc)
+        if r2_ds is None or not isinstance(r2_ds, xr.Dataset):
+            print(f"[Fit] No R² dataset for '{anc}'. Skipping.")
+            continue
+
+        # Get ancillary dataset and standardize variable names using alignment_map
+        anc_ds = self._contexts[anc]["data"]
+        rename_map = _alias_map_for(anc)
+        if rename_map:
+            # reverse: alias -> std
+            anc_ds_std = anc_ds.rename(rename_map)
+        else:
+            anc_ds_std = anc_ds
+
+        # Compute per-variable fits from r2_ds (using your helper)
+        anc_fits = {}
+        for var in alignment_vars:
+            # training points: ancillary vs target, flattened across depth bins & pairs
+            x, y = collect_xy_from_r2_ds(
+                r2_ds,
+                var=var,
+                target_name=target,
+                ancillary_name=anc,
+                r2_min=variable_r2_criteria.get(var),
+                time_max=max_time_hr,
+                dist_max=max_dist_km,
+            )
+            fit = fit_linear_map(x, y)  # {'slope','intercept','r2','n'}
+            anc_fits[var] = fit
+            print(
+                f"[Fit] {anc}:{var}  slope={fit['slope']:.4g}  intercept={fit['intercept']:.4g}  "
+                f"R²={fit['r2']:.3f}  N={fit['n']}"
+            )
+
+        # Apply fits to the full ancillary dataset for all present variables
+        ds_out = anc_ds_std.copy()
+        created_vars = []
+        for var in alignment_vars:
+            if var not in ds_out:
+                print(f"[Fit] [{anc}] variable '{var}' not present in dataset — skip.")
+                continue
+            slope = anc_fits[var]["slope"]
+            intercept = anc_fits[var]["intercept"]
+            npts = anc_fits[var]["n"]
+            out_name = f"{var}_ALIGNED_TO_{target}"
+
+            aligned = slope * ds_out[var] + intercept  # broadcasts over dims
+            # annotate
+            aligned = aligned.astype(ds_out[var].dtype, copy=False)
+            aligned.name = out_name
+            aligned.attrs.update(
+                {
+                    "long_name": f"{var} aligned to {target}",
+                    "alignment_target": target,
+                    "alignment_source": anc,
+                    "alignment_slope": float(slope),
+                    "alignment_intercept": float(intercept),
+                    "alignment_fit_points": int(npts),
+                    "alignment_generated": _dt.datetime.utcnow().isoformat() + "Z",
+                }
+            )
+            ds_out[out_name] = aligned
+            created_vars.append(out_name)
+
+        if not created_vars:
+            print(f"[Fit] No aligned variables created for '{anc}'. Skipping save.")
+            continue
+
+        # Save NetCDF
+        out_path = os.path.join(out_dir, f"{anc}_aligned_to_{target}.nc")
+        if (not overwrite) and os.path.exists(out_path):
+            print(f"[Fit] File exists, not overwriting: {out_path}")
+        else:
+            # Light-weight encodings: keep float types compact if possible
+            encoding = {name: {"zlib": True, "complevel": 2} for name in created_vars}
+            try:
+                ds_out.to_netcdf(out_path, encoding=encoding)
+                print(f"[Fit] Saved: {out_path}")
+                saved_paths[anc] = out_path
+                fits_summary[anc] = anc_fits
+            except Exception as e:
+                print(f"[Fit] Failed to save '{anc}': {e}")
+
+    return {"paths": saved_paths, "fits": fits_summary}

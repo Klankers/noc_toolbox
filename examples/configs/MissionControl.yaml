@@ -16,6 +16,12 @@ alignment:
         Doombar: CNDC
         Nelson: CNDC
         Cabot: CNDC
+    TEMP:
+      aliases:
+        Churchill: TEMP
+        Doombar: TEMP
+        Nelson: TEMP
+        Cabot: TEMP
 
 settings:
   diagnostics:
@@ -30,6 +36,9 @@ settings:
     save_plots: false
     plot_output_path: "r2_heatmap_grid.png"
     show_plots: true
-    variable_r2_thresholds:
-      CNDC: 0.99
+    variable_r2_criteria:
+      CNDC: 0.95
+      TEMP: 0.9
+    apply_and_save: True
+    output_path: ""
     
