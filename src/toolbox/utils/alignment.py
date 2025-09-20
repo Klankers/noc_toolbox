@@ -121,8 +121,6 @@ def interpolate_DEPTH(
 
     # --- Optional visualization of depth bins ---
     if plot:
-        import matplotlib.pyplot as plt  # local import to avoid hard dep for non-plot flows
-
         if plot_kind == "hist":
             # Overall measurement counts per bin
             bins_vals = ds["DEPTH_bin"].values

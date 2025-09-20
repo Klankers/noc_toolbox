@@ -249,12 +249,6 @@ class PipelineManager:
         """Retrieve the context dictionary from each pipeline."""
         return {name: p._context for name, p in self.pipelines.items()}
 
-    def get_cached_contexts(self):
-        """Return previously cached contexts after run_all()."""
-        if self._contexts is None:
-            raise RuntimeError("Pipelines must be run before accessing contexts.")
-        return self._contexts
-
     def summarise_all_profiles(self) -> pd.DataFrame:
         """
         For all pipelines, summarise profiles and plot glider-to-glider distance time series.
