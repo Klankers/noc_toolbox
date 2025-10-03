@@ -10,3 +10,4 @@ numpydoc
 IPython
 pickleshare
 insegel
+linkify-it-py
