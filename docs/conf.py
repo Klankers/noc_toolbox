@@ -75,7 +75,7 @@ autoapi_options = [
 # a list of builtin themes.
 #
 # html_theme = "sphinx_rtd_theme"
-html_theme = "insegel"
+html_theme = "groundwork"
 html_theme_options = {
     "collapse_navigation": False,  # Make sure the sidebar is always expanded
     "display_version": True,  # Show version number in sidebar

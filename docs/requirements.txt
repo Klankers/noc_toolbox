@@ -9,5 +9,5 @@ nbsphinx
 numpydoc
 IPython
 pickleshare
-insegel
+groundwork-sphinx-theme
 linkify-it-py
