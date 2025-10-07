@@ -8,7 +8,6 @@ import toolbox.utils.diagnostics as diag
 import xarray as xr
 import pandas as pd
 import numpy as np
-import gsw
 
 
 @register_step
@@ -46,6 +45,9 @@ class LoadOG1(BaseStep):
         self.log(f"Diagnostics: {self.diagnostics}")
         if self.diagnostics:
             self.generate_diagnostics()
+
+        if self.add_dev_cols:
+            self.add_missing_columns_dev()
 
         # add data to context
         self.context["data"] = self.data
