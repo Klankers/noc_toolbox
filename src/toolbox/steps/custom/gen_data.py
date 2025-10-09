@@ -7,6 +7,10 @@ from datetime import date, timedelta
 
 @register_step
 class GenerateData(BaseStep):
+    """
+    Example config setup:
+        
+    """
     step_name = "Generate Data"
 
     def run(self):
@@ -36,8 +40,7 @@ class GenerateData(BaseStep):
             "TEMP": [0, 20],  # Celcius
             "CNDC": [34, 35],  # S/m
         }
-        for variable_name, limits in user_value_limits.items():
-            variable_limits[variable_name] = limits
+        variable_limits.update(user_value_limits)
         if diagnostics:
             print(f"[Generate Data] Variables: {variable_limits}")
 

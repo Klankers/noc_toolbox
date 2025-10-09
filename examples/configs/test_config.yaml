@@ -1,0 +1,22 @@
+# Pipeline Configuration
+pipeline:
+  name: "Data Processing Pipeline"
+  description: "A pipeline for processing and analyzing multi-dimensional data"
+  visualisation: false  # Enable visualisation of the pipeline
+  
+# Steps in the pipeline
+steps:
+  - name: "Generate Data"
+    parameters:
+      sampling_info: ["2025-01-01", "2025-01-02", 3600]  # [start_date (y-m-d), end_date (y-m-d), sample_period (s)]
+      additional_variables: ["DENSITY", "ABS_SALINITY"]
+      value_limits: {'DENSITY': [1028, 1032]}
+      diagnostics: true
+
+  - name: "Apply QC"
+    parameters:
+      QC_order: [
+          "impossible date test"
+      ] 
+      diagnostics: true
+

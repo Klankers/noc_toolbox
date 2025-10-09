@@ -34,7 +34,7 @@ class impossible_date_test(QC_Test):
     """
 
     def __init__(self, df):
-        self.test_number = 2
+        self.required_variables = ["TIME"]
         self.df = df
         self.flags = None
 
@@ -79,7 +79,7 @@ class impossible_location_test(QC_Test):
     """
 
     def __init__(self, df):
-        self.test_number = 3
+        self.required_variables = ["LATITUDE", "LONGITUDE"]
         self.df = df
         self.flags = None
 
@@ -315,8 +315,9 @@ def spike_test(df):
 
 
 @register_step
-class ArgoQCStep(BaseStep):
-    step_name = "Argo QC"
+class ApplyQC(BaseStep):
+    
+    step_name = "Apply QC"
 
     def organise_flags(self, new_flags):
         # Method for taking in new flags and cross checking against exiting flags, including upgrading flags when necessary.
@@ -335,22 +336,24 @@ class ArgoQCStep(BaseStep):
         )
 
     def run(self):
-        # Defining the order of operations
-        # TODO: config names not numbers
-        qc_classes = {
-            # step_number: function
-            2: impossible_date_test,
-            3: impossible_location_test,
-            4: position_on_land_test,
-            5: impossible_speed_test,
-            6: global_range_test,
-            7: regional_range_test,
-            8: pressure_increasing_test,
-            9: spike_test,
+        
+        # Register of all QC steps
+        self.QC_REGISTER = {
+            "impossible date test": impossible_date_test,
+            "impossible location test": impossible_location_test,
         }
-        order = list(range(2, 10))
-        if self.parameters["step_order"] is not None:
-            order = self.parameters["step_order"]
+        self.qc_order = []
+        
+        # Defining the order of operations
+        # TODO: Register each QC test and check that all of the config-specified tests exist
+        if self.parameters["QC_order"] is None:
+            print('Please specify which QC operations to run')
+        else:
+            for qc_name in self.parameters["QC_order"]:
+                if qc_name in self.QC_REGISTER.keys():
+                    self.qc_order.append(qc_name)
+                else:
+                    print(f"The QC test name: {qc_name} was not recognised. Skipping...")
 
         # Check if the data is in the context
         if "data" not in self.context:
@@ -360,14 +363,15 @@ class ArgoQCStep(BaseStep):
         else:
             self.log("Data found in context.")
         data = self.context["data"]
+        
         # Convert data to polars for fast processing
+        # TODO: Make QC classes have required variables. Collect them and then check they are present in the data
         qc_variables = [
             "TIME",
             "LATITUDE",
             "LONGITUDE",
             "PRES",
             "TEMP",
-            "PRAC_SALINITY",
         ]
         if set(qc_variables).issubset(set(data.keys())):
             df = pl.from_pandas(data[qc_variables].to_dataframe(), nan_to_null=False)
@@ -388,18 +392,16 @@ class ArgoQCStep(BaseStep):
             )
 
         # Run through all of the QC steps and add the flags to flag_store
-        for step_number in order:
+        for qc_test in self.qc_order:
             # Create an instance of this test step
-            qc_test_instance = qc_classes[step_number](df)
-            if qc_test_instance.test_number != step_number:
-                raise DeprecationWarning(
-                    "[Argo QC] WARNING: Using a QC test instance that lacks a test number."
-                )
+            qc_test_instance = self.QC_REGISTER[qc_test](df)
             returned_flags = qc_test_instance.return_qc()
             self.organise_flags(returned_flags)
+            
             # Diagnostic plotting
             if self.parameters["diagnostics"]:
                 qc_test_instance.plot_diagnostics()
+                
             # Once finished, remove the test instance from memory
             del qc_test_instance
 
