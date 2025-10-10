@@ -54,7 +54,7 @@ Key characteristics:
         def run(self):
             self.log("Loading NetCDF data...")
             # Do processing
-            return {"ds": loaded_xarray}
+            return self.context
     ```
     Registered steps are stored in a global registry (`REGISTERED_STEPS`) and automatically imported at runtime by:
     ```python
