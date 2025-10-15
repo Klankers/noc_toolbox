@@ -28,12 +28,6 @@ steps:
       depth_column: "DEPTH"
     diagnostics: false
 
-  # - name: "ADJ: Salinity"
-  #   parameters:
-  #     CTLag: True
-  #     ThermalLag: True
-  #     windowLength: 21 # Length of the window for QC
-  #   diagnostics: true  # Enable diagnostics for QC step
 
   - name: "Data Export"
     parameters:
