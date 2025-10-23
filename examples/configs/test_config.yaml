@@ -8,15 +8,17 @@ pipeline:
 steps:
   - name: "Generate Data"
     parameters:
-      sampling_info: ["2025-01-01", "2025-01-02", 3600]  # [start_date (y-m-d), end_date (y-m-d), sample_period (s)]
+      sampling_info: ["2025-01-01", "2025-01-02", 20]  # [start_date (y-m-d), end_date (y-m-d), sample_period (s)]
       additional_variables: ["DENSITY", "ABS_SALINITY"]
-      value_limits: {'DENSITY': [1028, 1032]}
+      value_limits: {
+        "DENSITY": [1028, 1032],
+      }
       diagnostics: true
 
   - name: "Apply QC"
     parameters:
       QC_order: [
-          "impossible date test"
+          "impossible speed test"
       ] 
       diagnostics: true
 
