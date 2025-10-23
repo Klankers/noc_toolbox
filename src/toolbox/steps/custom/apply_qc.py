@@ -14,10 +14,43 @@ import shapely as sh
 import geopandas
 
 # Defining QC functions from "Argo Quality Control Manual for CTD and Trajectory Data" (https://archimer.ifremer.fr/doc/00228/33951/).
-# TODO: Do we need a bin nan rows QC to speed up processing?
+
+def range_test(df, variable_name, limits, flag):
+    # Not the most efficient implementation because of second for loop.
+    df = df.with_columns(
+        ((pl.col(variable_name) > limits[0]) & (pl.col(variable_name) < limits[1]))
+        .not_()
+        .cast(pl.Int64)
+        * flag.alias(f"{variable_name}_QC")
+    )
+    return df
 
 
-class impossible_date_test:
+class test_template:
+    """
+    Target Variable:
+    Flag Number:
+    Variables Flagged:
+    ? description ?
+    """
+
+    name = ""
+    required_variables = []
+
+    def __init__(self, df):
+        self.df = df
+        self.flags = None
+
+    def return_qc(self):
+        self.flags = None  # replace with processing of some kind
+        return self.flags
+
+    def plot_diagnostics(self):
+        # Any relevant diagnostic
+        pass
+
+
+class impossible_date_test(test_template):
     """
     Target Variable: TIME
     Test Number: 2
@@ -25,11 +58,8 @@ class impossible_date_test:
     Checks that the datetime of each point is valid.
     """
 
-    def __init__(self, df):
-        self.name = "impossible date test"
-        self.required_variables = ["TIME"]
-        self.df = df
-        self.flags = None
+    name = "impossible date test"
+    required_variables = ["TIME"]
 
     def return_qc(self):
         # Check if any of the datetime stamps fall outside 1985 and the current datetime
@@ -63,7 +93,7 @@ class impossible_date_test:
         plt.show(block=True)
 
 
-class impossible_location_test:
+class impossible_location_test(test_template):
     """
     Target Variable: LATITUDE, LONGITUDE
     Test Number: 3
@@ -71,11 +101,8 @@ class impossible_location_test:
     Checks that the latitude and longitude are valid.
     """
 
-    def __init__(self, df):
-        self.name = "impossible location test"
-        self.required_variables = ["LATITUDE", "LONGITUDE"]
-        self.df = df
-        self.flags = None
+    name = "impossible location test"
+    required_variables = ["LATITUDE", "LONGITUDE"]
 
     def return_qc(self):
         for label, bounds in zip(["LATITUDE", "LONGITUDE"], [(-90, 90), (-180, 180)]):
@@ -125,19 +152,16 @@ class impossible_location_test:
         plt.show(block=True)
 
 
-class position_on_land_test:
+class position_on_land_test(test_template):
     """
     Target Variable: LATITUDE, LONGITUDE
     Test Number: 4
     Flag Number: 4 (bad data)
     Checks that the measurement location is not on land.
     """
-    def __init__(self, df):
 
-        self.name = "position on land test"
-        self.required_variables = ["LATITUDE", "LONGITUDE"]
-        self.df = df
-        self.flags = None
+    name = "position on land test"
+    required_variables = ["LATITUDE", "LONGITUDE"]
 
     def return_qc(self):
 
@@ -199,7 +223,7 @@ class position_on_land_test:
         plt.show(block=True)
 
 
-class impossible_speed_test:
+class impossible_speed_test(test_template):
     """
     Target Variable: TIME, LATITUDE, LONGITUDE
     Test Number: 5
@@ -207,12 +231,8 @@ class impossible_speed_test:
     Checks that the the glider speed stays below 3m/s
     """
 
-    def __init__(self, df):
-
-        self.name = "impossible speed test"
-        self.required_variables = ["TIME", "LATITUDE", "LONGITUDE"]
-        self.df = df
-        self.flags = None
+    name = "impossible speed test"
+    required_variables = ["TIME", "LATITUDE", "LONGITUDE"]
 
     def return_qc(self):
 
@@ -278,6 +298,63 @@ class impossible_speed_test:
         plt.show(block=True)
 
 
+class pressure_range_test(test_template):
+    """
+    Target Variable: PRES (pressure)
+    Flag Number: 4 (bad data), 3 (Bad, potentially correctable)
+    Variables Flagged: PRES (pressure), TEMP (temperature), CNDC (conductivity)
+    Checks that the pressure is within a reasonable range.
+    """
+
+    name = "pressure range test"
+    required_variables = ["PRES"]
+
+    def return_qc(self):
+
+        # Set flags
+        self.flags = self.df.select(
+            pl.when(pl.col("PRES").is_between(-5, -2.4)).then(3)
+            .when(pl.col("PRES") < -5).then(4)
+            .otherwise(0)
+            .alias("PRES_QC")
+        )
+
+        # Apply to other variables as well
+        self.flags = self.flags.with_columns(
+            pl.col("PRES_QC").alias("TEMP_QC"),
+            pl.col("PRES_QC").alias("CNDC_QC"),
+        )
+
+        return self.flags
+
+    def plot_diagnostics(self):
+        matplotlib.use("tkagg")
+        fig, ax = plt.subplots(figsize=(8, 6), dpi=200)
+
+        # Values
+        ax.plot(self.df["PRES"], c="b")
+        ax.set(
+            xlabel="Index",
+            ylabel="Pressure",
+        )
+        ax.yaxis.label.set_color("b")
+
+        # Flags
+        ax_twin = ax.twinx()
+        ax_twin.plot(self.flags[f"PRES_QC"], c="r")
+        ax_twin.set(
+            xlabel="Index",
+            ylabel=f"Flag",
+        )
+        ax_twin.yaxis.label.set_color("r")
+
+        # Speed threshold
+        ax.axhline(-2.4, ls="--", c="k")
+        ax.axhline(-5, ls="--", c="k")
+        fig.tight_layout()
+        plt.show(block=True)
+
+
 def global_range_test(df):
     """
     Target Variable: PRES, TEMP, PRAC_SALINITY
@@ -294,15 +371,7 @@ def global_range_test(df):
         ("PRAC_SALINITY", [2, 41], ["PRAC_SALINITY"], 4),
     )
 
-    # Not the most efficient implementation because of second for loop.
-    for var, lims, flag_vars, flag in test_calls:
-        for flag_var in flag_vars:
-            df = df.with_columns(
-                ((pl.col(var) > lims[0]) & (pl.col(var) < lims[1]))
-                .not_()
-                .cast(pl.Int64)
-                * flag.alias(f"{flag_var}_QC")
-            )
+
 
     return df
 
@@ -401,61 +470,59 @@ class ApplyQC(BaseStep):
             )
         # Add new QC flag columns if they dont already exist
         flag_columns_to_add = set(new_flags.columns) - set(self.flag_store.columns)
-        self.flag_store = self.flag_store.with_columns(
-            new_flags[list(flag_columns_to_add)],
-        )
+        if len(flag_columns_to_add) > 0:
+            self.flag_store = self.flag_store.with_columns(
+                new_flags[list(flag_columns_to_add)],
+            )
 
     def run(self):
         
-        # Register of all QC steps
-        self.QC_REGISTER = {
-            "impossible date test": impossible_date_test,
-            "impossible location test": impossible_location_test,
-            "position on land test": position_on_land_test,
-            "impossible speed test": impossible_speed_test,
-        }
-        self.qc_order = []
-        
+        # Register of all QC steps and required variables
+        self.QC_REGISTER = {}
+        for cls in test_template.__subclasses__():
+            if hasattr(cls, 'name') and cls.name:
+                self.QC_REGISTER[cls.name] = cls
+
         # Defining the order of operations
-        # TODO: Register each QC test and check that all of the config-specified tests exist
+        self.qc_order = []
         if self.parameters["QC_order"] is None:
-            print('Please specify which QC operations to run')
+            print('[Apply QC] Please specify which QC operations to run')
         else:
             for qc_name in self.parameters["QC_order"]:
                 if qc_name in self.QC_REGISTER.keys():
-                    self.qc_order.append(qc_name)
+                    self.qc_order.append(self.QC_REGISTER[qc_name])
                 else:
-                    print(f"The QC test name: {qc_name} was not recognised. Skipping...")
+                    print(f"[Apply QC] The QC test name: {qc_name} was not recognised. Skipping...")
 
         # Check if the data is in the context
         if "data" not in self.context:
             raise ValueError(
-                "[Argo QC] No data found in context. Please load data first."
+                "[Apply QC] No data found in context. Please load data first."
             )
         else:
             self.log("Data found in context.")
         data = self.context["data"]
         
+        # Collect all of the required varible names
+        all_required_variables = set({})
+        for test in self.qc_order:
+            all_required_variables.update(test.required_variables)
+
         # Convert data to polars for fast processing
-        # TODO: Make QC classes have required variables. Collect them and then check they are present in the data
-        qc_variables = [
-            "TIME",
-            "LATITUDE",
-            "LONGITUDE",
-            "PRES",
-            "TEMP",
-        ]
-        if set(qc_variables).issubset(set(data.keys())):
-            df = pl.from_pandas(data[qc_variables].to_dataframe(), nan_to_null=False)
+        if set(all_required_variables).issubset(set(data.keys())):
+            df = pl.from_pandas(data[all_required_variables].to_dataframe(), nan_to_null=False)
         else:
             raise KeyError(
-                f"[Argo QC] The data is missing variables: ({set(qc_variables) - set(data.keys())}) which are required for QC."
-                f" Make sure that the variables are present in the data, or use the 'Derive CDT' step to append them."
+                f"[Argo QC] The data is missing variables: ({set(all_required_variables) - set(data.keys())}) which are required for QC."
+                f" Make sure that the variables are present in the data, or use remove tests from the order."
             )
+
+        # Try and fetch the qc history from context and update it
+        qc_history = self.context.setdefault("qc_history", {})
 
         # Fetch existing flags from the data and create a place to store them
         existing_flags = [
-            flag_column for flag_column in df.columns if "_QC" in flag_column
+            flag_column for flag_column in data.data_vars if "_QC" in flag_column
         ]
         self.flag_store = pl.DataFrame()
         if len(existing_flags) > 0:
@@ -466,10 +533,16 @@ class ApplyQC(BaseStep):
         # Run through all of the QC steps and add the flags to flag_store
         for qc_test in self.qc_order:
             # Create an instance of this test step
-            qc_test_instance = self.QC_REGISTER[qc_test](df)
+            print(f"[Apply QC] Applying: {qc_test.name}")
+            qc_test_instance = qc_test(df)
             returned_flags = qc_test_instance.return_qc()
             self.organise_flags(returned_flags)
-            
+
+            # Update QC history
+            for flagged_var in returned_flags.columns:
+                percent_flagged = (returned_flags[flagged_var].to_numpy() != 0).sum() / len(returned_flags)
+                qc_history.setdefault(flagged_var, []).append((qc_test.name, percent_flagged))
+
             # Diagnostic plotting
             if self.parameters["diagnostics"]:
                 qc_test_instance.plot_diagnostics()
@@ -484,4 +557,5 @@ class ApplyQC(BaseStep):
                 self.flag_store[flag_column].to_numpy(),
             )
         self.context["data"] = data
+        self.context["qc_history"] = qc_history
         return self.context
