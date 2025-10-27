@@ -35,28 +35,69 @@ class InterpolateVariables(BaseStep):
         if "data" not in self.context:
             raise ValueError("No data found in context. Please load data first.")
         else:
-            self.log(f"[Interpolate Data] Data found in context.")
+            self.log(f"Data found in context.")
 
         data = self.context["data"]
 
+        # Get target flags to interpolate over
+        target_flags = self.parameters["target_flags"]
+
         # Get variable to interpolate from config
         variables_to_interpolate = set(self.parameters["variables_to_interpolate"])
+        if "TIME" in variables_to_interpolate:
+            print("TIME was listed for interpolation. This is prohibited and TIME will be skipped")
+            variables_to_interpolate.remove("TIME")
 
         # Extract data subset with QC columns
-        cols_to_extract = variables_to_interpolate | {"TIME"}  #TODO: Unfinished - get the qc columns as well
-        df = pl.from_pandas(data[list(variables_to_interpolate | {"TIME"})].to_dataframe(), nan_to_null=False)
+        qc_cols = {col+"_QC" for col in variables_to_interpolate}
+        all_cols = variables_to_interpolate.union(qc_cols)
+        if not all_cols.issubset(set(data.data_vars)):
+            missing_cols = all_cols-set(data.data_vars)
+            print(f"The following variables were not found in the data: {missing_cols}. These will be skipped.")
+            for col in missing_cols:
+                all_cols.remove(col)
+        df = pl.from_pandas(data[list(all_cols | {"TIME"})].to_dataframe(), nan_to_null=False)
 
+        # Replacement interpolation strategy
+        for var in variables_to_interpolate:
+            df = df.with_columns(
+                pl.when(
+                    pl.col(f"{var}_QC").is_in(target_flags)
+                ).then(np.nan)
+                .otherwise(pl.col(var))
+                .alias(var)
+            )
+
+        # Replace all nans with Nones (polars recognises interpolation gaps by Nones)
         df = df.with_columns(
-            pl.col(col).replace({np.nan: None}).interpolate_by("TIME").name.prefix("INTERP_")
-            for col in variables_to_interpolate
+            pl.all().exclude("TIME").cast(pl.Float64).replace({np.nan: None})
+        )
+
+        # Interpolate
+        df = df.with_columns(
+            pl.col(var).interpolate_by("TIME")
+            for var in variables_to_interpolate
+        )
+
+        # Update flags
+        df = df.with_columns(
+            pl.when(
+                pl.col(var).is_not_null() & (pl.col(f"{var}_QC").is_in(target_flags))
+            ).then(8)
+            .otherwise(f"{var}_QC")
+            .alias(f"{var}_QC")
+            for var in variables_to_interpolate
+        )
+
+        # Turn the Nones back into nans
+        df = df.with_columns(
+            pl.all().exclude("TIME").replace({None: np.nan})
         )
 
         # Add derived variables back to the xarray Dataset with proper metadata
-        for var_name in variables_to_interpolate.items():
+        for var in all_cols:
             # Convert Polars column back to numpy array and add to xarray Dataset
-            data[var_name] = (("N_MEASUREMENTS",), df[var_name].to_numpy())
-            # Attach CF-compliant metadata attributes
-            data[var_name].attrs = meta
+            data[var] = (("N_MEASUREMENTS",), df[var].to_numpy())
 
         # Update the context with the enhanced dataset
         self.context["data"] = data
