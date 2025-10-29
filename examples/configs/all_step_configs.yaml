@@ -1,0 +1,66 @@
+# All step configs
+steps:
+# Importing/Generating data
+  - name: "Generate Data"
+    parameters:
+      sampling_info: ["2025-01-01", "2025-01-02", 20]  # [start_date (y-m-d), end_date (y-m-d), sample_period (s)]
+      additional_variables: ["DENSITY", "ABS_SALINITY"]
+      value_limits: {
+        "DENSITY": [1028, 1032],
+      }
+      diagnostics: true
+
+  - name: "Load OG1"
+    parameters:
+      file_path: "../../examples/data/OG1/Cabot_645_R.nc" # Path to the input NetCDF file
+      add_meta: false # Add metadata to the data
+      add_elapsed_time: false  # Add ELAPSED_TIME in seconds to the data
+      add_dev_cols: false  # Add dev columns such as CTD_TIME (for testing)
+    diagnostics: false  # Enable diagnostics
+
+# Processing
+  - name: "Apply QC"
+    parameters:
+      QC_order: [  # Applies the following tests in the written order. You may choose to rearange or remove tests.
+        "impossible date test",
+        "impossible location test",
+        "position on land test",
+        "impossible speed test",
+        "pressure range test"
+      ]
+      diagnostics: true  # Generates plots for each test (currently very slow)
+
+  - name: "Interpolate Data"
+    parameters:
+      variables_to_interpolate: [  # List of all variables you would like to interpolate
+          "LATITUDE",
+          "LONGITUDE",
+          "PRES"
+      ]
+      target_flags: [3, 4, 9]  # Flags that will be interpolated over
+    diagnostics: true
+
+  - name: "Derive CTD"
+    parameters:
+      to_derive: [  # Derives the variables listed below. You may choose to use a subset
+        "DEPTH",  # Reccomended as Find Profiles is designed to use DEPTH, but will work with PRES as well
+        "PRAC_SALINITY",
+        "ABS_SALINITY",
+        "CONS_TEMP",
+        "DENSITY"
+      ]
+    diagnostics: true  # Prints a sample of the dataset
+
+  - name: "Find Profiles"
+    parameters:
+      gradient_thresholds: [ 0.02, -0.02 ]  # Thresholds on vertical velocity to determine profile end points
+      filter_window_sizes: [ "10s", "20s" ]  # Window sizes for [median, mean] filtering the vertical velocity signal (helps with bumpy profiles)
+      depth_column: "DEPTH"  # Variable used to calculate "vertical velocity (W)" (can be anything in theory, it just wont be W)
+    diagnostics: false  # If true, the user can adjust the filters and thresholds to optimise the profiling
+
+# Data export
+  - name: "Data Export"
+    parameters:
+      export_format: "hdf5"  # Define the export format (e.g., OG1, CSV, etc.)
+      output_path: "../../examples/data/OG1/exported_Cabot_645.nc"  # Export path
+    diagnostics: false  # Disable diagnostics for export step
