@@ -24,7 +24,7 @@ class QCHandlingMixin:
         missing_variables = []
         for var in self.filter_settings:
             if var not in self.data or f"{var}_QC" not in self.data:
-                log(f"One or both of {var}/{var}_QC are missing from the dataset. They will be skipped.")
+                self.log(f"One or both of {var}/{var}_QC are missing from the dataset. They will be skipped.")
                 missing_variables.append(var)
         for missing in missing_variables:
             self.filter_settings.pop(missing)
@@ -81,8 +81,54 @@ class QCHandlingMixin:
             self.data[f"{var}_QC"] = xr.where(mask, self.data_copy[f"{var}_QC"], updated_flags)
 
 
-    def generate_qc(self, generation_protocols: dict):
-        # TODO: Make a combinatrix for updating QC
+    def generate_qc(self, qc_constituents: dict):
 
+        # Unpack the parent qc
+        for qc_child, qc_parents in qc_constituents.items():
+            # Check the child exists
+            if qc_child not in self.data:
+                self.log(f"{qc_child} is not present in the dataset. Skipping...")
+                continue
 
-        pass
+            # Check parents are present
+            if not set(qc_parents).issubset(set(self.data.data_vars)):
+                self.log(f"{qc_child} is missing one or multiple of {qc_parents} in the dataset. Skipping...")
+                continue
+
+            # Assign the child the first parents QC
+            self.data[qc_child] = self.data[qc_parents[0]]
+
+            # If there is more than 1 parent, then itteratively upgrade the QC
+            if len(qc_parents) > 1:
+                # Define a combinatrix for flag upgrading priority
+                qc_combinatrix = np.array([
+                    [0, 0, 0, 3, 4, 0, 0, 0, 0, 9],
+                    [0, 1, 2, 3, 4, 5, 1, 1, 8, 9],
+                    [0, 2, 2, 3, 4, 5, 2, 2, 8, 9],
+                    [3, 3, 3, 3, 4, 3, 3, 3, 3, 9],
+                    [4, 4, 4, 4, 4, 4, 4, 4, 4, 9],
+                    [0, 5, 5, 3, 4, 5, 5, 5, 8, 9],
+                    [0, 1, 2, 3, 4, 5, 6, 6, 8, 9],
+                    [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+                    [0, 8, 8, 3, 4, 8, 8, 8, 8, 9],
+                    [9, 9, 9, 9, 9, 9, 9, 9, 9, 9]
+                ])
+
+                for qc_parent in qc_parents[1:]:
+                    self.data[qc_child] = qc_combinatrix[self.data[qc_child], self.data[qc_parent]]
+
+        # Check for any new columns that are missing QC
+        all_var_names = {
+            var for var in self.data.data_vars
+            if var.isupper() and ("_QC" not in var) and (var not in self.data.dims)
+        }
+        all_qc_names = {var[:-3] for var in self.data.data_vars if "_QC" in var}
+        missing_qc = all_var_names - all_qc_names
+
+        if len(missing_qc) > 0:
+            self.log(f"The following variables are missing QC: {missing_qc}. Assigning unchecked (0) QC flags.")
+            data_subset = self.data[list(missing_qc)]
+            flags = xr.where(
+                data_subset.isnull(), 9, 0
+            ).astype(int).rename({var: f"{var}_QC" for var in missing_qc})
+            self.data.update(flags)
