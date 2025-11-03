@@ -57,7 +57,7 @@ class QCHandlingMixin:
             pass
 
         elif self.behaviour == "reinsert":
-            for var in self.filter_settings.keys():
+            for var, flags_to_nan in self.filter_settings.items():
 
                 # Find all of the postitions where there was bad data
                 mask = self.data[f"{var}_QC"].isin(flags_to_nan)
@@ -75,7 +75,7 @@ class QCHandlingMixin:
             mask = (self.data[var] == self.data_copy[var])
 
             # Make a refference table for all possible flag updates
-            updated_flags = self.data[f"{var}_QC"].map(self.flag_mapping.get)
+            updated_flags = xr.apply_ufunc(lambda x: self.flag_mapping.get(x), self.data[f"{var}_QC"], vectorize=True)
 
             # Where data has changed, replace the old flag with the updated flag
             self.data[f"{var}_QC"] = xr.where(mask, self.data_copy[f"{var}_QC"], updated_flags)
@@ -86,17 +86,17 @@ class QCHandlingMixin:
         # Unpack the parent qc
         for qc_child, qc_parents in qc_constituents.items():
             # Check the child exists
-            if qc_child not in self.data:
-                self.log(f"{qc_child} is not present in the dataset. Skipping...")
+            if qc_child[:-3] not in self.data:
+                self.log(f"Trying to assign QC to a variable ({qc_child[:-3]}) which is not present in the dataset. Skipping...")
                 continue
 
             # Check parents are present
             if not set(qc_parents).issubset(set(self.data.data_vars)):
-                self.log(f"{qc_child} is missing one or multiple of {qc_parents} in the dataset. Skipping...")
+                self.log(f"{qc_child} is missing one or multiple of ({qc_parents}) in the dataset. Skipping...")
                 continue
 
             # Assign the child the first parents QC
-            self.data[qc_child] = self.data[qc_parents[0]]
+            self.data[qc_child] = self.data[qc_parents[0]].copy()
 
             # If there is more than 1 parent, then itteratively upgrade the QC
             if len(qc_parents) > 1:
@@ -115,7 +115,7 @@ class QCHandlingMixin:
                 ])
 
                 for qc_parent in qc_parents[1:]:
-                    self.data[qc_child] = qc_combinatrix[self.data[qc_child], self.data[qc_parent]]
+                    self.data[qc_child][:] = qc_combinatrix[self.data[qc_child], self.data[qc_parent]]
 
         # Check for any new columns that are missing QC
         all_var_names = {
