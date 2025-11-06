@@ -98,7 +98,7 @@ class AdjustSalinity(BaseStep):
                 if self.parameters["CTLag"]:
                     self.tsr = self.call_CTlag()
                 if self.parameters["thermal_lag_correction"]:
-                    self.thermal_lag_correction()
+                    self.run_thermal_lag_correction()
 
             self.context["data"] = self.tsr[0]
             return self.context
@@ -111,14 +111,14 @@ class AdjustSalinity(BaseStep):
             self.tsr = self.call_CTlag()
             self.display_CTLag()
         if self.parameters["ThermalLag"]:
-            self.thermal_lag_correction()
+            self.run_thermal_lag_correction()
             self.display_adj_profiles()
         self.display_tsr_raw()
         self.display_tsr_adj()
         plt.ioff()
         self.log(f"Diagnostics generated.")
 
-    def thermal_lag_correction(self):
+    def run_thermal_lag_correction(self):
 
         # Check that call_CTlag was run first
         if 1 in self.tsr.keys():
