@@ -47,7 +47,7 @@ class ApplyQC(BaseStep):
             raise ValueError("[Apply QC] No data found in context. Please load data first.")
         else:
             self.log("Data found in context.")
-        data = self.context["data"]
+        data = self.context["data"].copy()
 
         # Try and fetch the qc history from context and update it
         qc_history = self.context.setdefault("qc_history", {})
