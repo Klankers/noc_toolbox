@@ -13,3 +13,8 @@ scikit-learn
 matplotlib
 seaborn
 requests
+graphviz
+polars
+geodatasets
+shapely
+geopandas
