@@ -19,15 +19,19 @@ class BlankStep(BaseStep, QCHandlingMixin):
     def run(self):
         self.filter_qc()
 
-        # self.data["B"] = self.data["B"] * 2
-        self.data["C"] = self.data["A"] * self.data["B"]
+        # EXAMPLE: self.data["C"] = self.data["A"] * self.data["B"]
 
         self.reconstruct_data()
         self.update_qc()
-        self.generate_qc({"C_QC": ["A_QC", "B_QC"]})
 
-        self.generate_diagnostics()
+        # If a new variable was added, use self.generate_qc()
+        # EXAMPLE: self.generate_qc({"C_QC": ["A_QC", "B_QC"]})
+
+        if self.diagnostics:
+            self.generate_diagnostics()
+
+        self.context["data"] = self.data
         return self.context
 
     def generate_diagnostics(self):
-        self.print_qc_settings()
+        pass
