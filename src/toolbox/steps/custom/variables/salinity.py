@@ -5,6 +5,7 @@ import toolbox.utils.diagnostics as diag
 
 #### Custom imports ####
 import matplotlib.pyplot as plt
+import matplotlib as mpl
 from scipy import interpolate
 import xarray as xr
 import numpy as np
@@ -117,7 +118,6 @@ def compute_optimal_lag(profile_data, filter_window_size):
 class AdjustSalinity(BaseStep, QCHandlingMixin):
     step_name = "Salinity Adjustment"
 
-
     def run(self):
         """
         Apply the thermal-lag correction for Salinity presented in Morrison et al 1994.
@@ -134,9 +134,8 @@ class AdjustSalinity(BaseStep, QCHandlingMixin):
         --------------
           - name: "ADJ: Salinity"
             parameters:
-              CTLag: true
-              thermal_lag_correction: true
               filter_window_size: 21
+              plot_profiles_in_range: [100, 150]
             diagnostics: false
 
         Parameters
@@ -161,6 +160,9 @@ class AdjustSalinity(BaseStep, QCHandlingMixin):
         self.log(f"Running adjustment...")
         # TODO: TIME_CTD checking
 
+        # Required for plotting later
+        self.data_copy = self.data.copy()
+
         # Filter user-specified flags
         self.filter_qc()
 
@@ -170,24 +172,18 @@ class AdjustSalinity(BaseStep, QCHandlingMixin):
         # Correct thermal mass error
         self.correct_thermal_lag()
 
-        if self.diagnostics:
-            self.generate_diagnostics()
-
         self.reconstruct_data()
         self.update_qc()
+
+        if self.diagnostics:
+            self.generate_diagnostics()
 
         self.context["data"] = self.data
         return self.context
 
-
     def generate_diagnostics(self):
-        plt.ion()
         self.display_CTLag()
-        #self.display_adj_profiles()
-        #self.display_tsr_raw()
-        #self.display_tsr_adj()
-        plt.ioff()
-
+        self.display_adj_profiles()
 
     def correct_ct_lag(self):
         """
@@ -216,7 +212,7 @@ class AdjustSalinity(BaseStep, QCHandlingMixin):
 
         # Estimate the CT lag every profile or 10 profiles for more than 300 profiles.
         # Note that profile_numbers is not a list of consecutive integers as some profiles may have been filtered out.
-        profile_numbers = np.unique(self.data["PROFILE_NUMBER"].values).astype("int32")
+        profile_numbers = np.unique(self.data["PROFILE_NUMBER"].dropna(dim="N_MEASUREMENTS").values)
         if len(profile_numbers) > 300:
             profile_numbers = profile_numbers[::10]
 
@@ -252,7 +248,6 @@ class AdjustSalinity(BaseStep, QCHandlingMixin):
         
         # Reinsert the time-shifted data back into self.data
         self.data["CNDC"][~nan_mask] = data_subset["CNDC"]
-        
 
     def correct_thermal_lag(self):
 
@@ -311,10 +306,10 @@ class AdjustSalinity(BaseStep, QCHandlingMixin):
 
         # Reinsert the corrected data back into self.data
         self.data["TEMP"][~nan_mask] = data_subset["TEMP"]
-        
 
     def display_CTLag(self):
         # Display optimal CTlag for each profile
+        mpl.use("tkagg")
         prof_min, prof_max = np.nanmin(self.per_profile_optimal_lag[:, 0]), np.nanmax(self.per_profile_optimal_lag[:, 0])
         tau_median = np.nanmedian(self.per_profile_optimal_lag[:, 1])
 
@@ -338,6 +333,8 @@ class AdjustSalinity(BaseStep, QCHandlingMixin):
         )
         ax.set_xlabel("Profile Index", fontweight="bold")
 
+        fig.tight_layout()
+        plt.show(block=True)
 
     def display_adj_profiles(self):
         """
@@ -348,210 +345,48 @@ class AdjustSalinity(BaseStep, QCHandlingMixin):
             (4) difference between raw and ADJ (CTlag + thermal lag correction) salinity and temperature
 
         """
+        mpl.use("tkagg")
 
-        # Define a subset of ~20 profiles in the mid-mission
-        prof_idx = self.data["PROFILE_NUMBER"]
-        unique_prof = np.unique(prof_idx)
-        prof1 = int(np.nanmedian(unique_prof))
-        prof2 = prof1 + int(np.nanmin([unique_prof.shape[0] / 2, 20]))
-        
-        self.tsrs = {}
-        for i in range(3):
-            self.tsrs[i] = self.tsr[i].where(
-                (prof_idx > prof1) & (prof_idx < prof2), drop=True
+        # Get corrected and uncorrected profiles
+        uncorrected_profiles = self.data_copy.where(
+            (self.data["PROFILE_NUMBER"] > self.plot_profiles_in_range[0]) &
+            (self.data["PROFILE_NUMBER"] < self.plot_profiles_in_range[1]),
+            drop=True
+        )
+        corrected_profiles = self.data.where(
+            (self.data["PROFILE_NUMBER"] > self.plot_profiles_in_range[0]) &
+            (self.data["PROFILE_NUMBER"] < self.plot_profiles_in_range[1]),
+            drop=True
+        )
+
+        fig, axs = plt.subplots(ncols=2, figsize=(8, 8), sharex=True, sharey=True)
+
+        for ax, data, title in zip(axs, [uncorrected_profiles, corrected_profiles], ["Uncorrected", "Corrected"]):
+            for direction, col, label in zip([-1, 1], ["r", "b"], ["Descending", "Ascending"]):
+                plot_data = data[["DEPTH", "CNDC", "TEMP", "PRES", "PROFILE_DIRECTION"]].where(
+                    data["PROFILE_DIRECTION"] == direction
+                )
+                plot_data["PRAC_SALINITY"] = gsw.conversions.SP_from_C(
+                    plot_data["CNDC"],
+                    plot_data["TEMP"],
+                    plot_data["PRES"],
+                )
+
+                ax.plot(
+                    plot_data["PRAC_SALINITY"],
+                    plot_data["DEPTH"],
+                    marker="o",
+                    ls="",
+                    c=col,
+                    label=label
+                )
+
+            ax.set(
+                xlabel="Practical Salinity",
+                ylabel="Depth",
+                title=title
             )
+            ax.legend(loc="upper right")
 
-        nonna = np.isfinite(self.tsrs[0].TEMP)
-        idx_u = np.where(self.tsrs[0].profile_direction.values[nonna] == -1)  # Ups
-        idx_d = np.where(self.tsrs[0].profile_direction.values[nonna] == 1)  # Downs
-
-        fig, ax = plt.subplots(ncols=4, figsize=(15, 8), sharey=True)
-
-        # Function to plot data for each category (downs and ups)
-        def plot_profiles(self, index, color, labels):
-            for ct, i in enumerate(
-                np.unique(self.tsrs[0].PROFILE_NUMBER[index].values)
-            ):
-                prof_id = np.where(self.tsrs[0].PROFILE_NUMBER[index].values == i)
-
-                ax[0].plot(
-                    self.tsrs[0].PSAL[index][prof_id],
-                    -self.tsrs[0].DEPTH[index][prof_id],
-                    color,
-                    label=labels[0] if ct == 0 else None,
-                )
-                ax[1].plot(
-                    self.tsrs[1].PSAL_ADJ[index][prof_id],
-                    -self.tsrs[1].DEPTH[index][prof_id],
-                    color,
-                    label=labels[1] if ct == 0 else None,
-                )
-                ax[2].plot(
-                    self.tsrs[2].PSAL_ADJ[index][prof_id],
-                    -self.tsrs[2].DEPTH[index][prof_id],
-                    color,
-                    label=labels[2] if ct == 0 else None,
-                )
-
-                ax[3].plot(
-                    self.tsrs[2].PSAL_ADJ[index][prof_id]
-                    - self.tsrs[0].PSAL[index][prof_id],
-                    -self.tsrs[2].DEPTH[index][prof_id],
-                    color,
-                    label=labels[3] if ct == 0 else None,
-                )
-            if color == "grey":
-                ax3 = ax[3].twiny()
-                ax3.plot(
-                    self.tsrs[2].TEMP[index][prof_id],
-                    -self.tsrs[2].DEPTH[index][prof_id],
-                    c="k",
-                    label="Temperature" if ct == 0 else None,
-                )
-                ax3.set_xlabel("Temperature [$^{\circ}$C]", fontweight="bold")
-
-        plot_profiles(
-            self.tsrs,
-            idx_d,
-            "grey",
-            ["downs", "downs (CTlag)", "downs (thermal mass)", "downs (ADJ - raw)"],
-        )
-        plot_profiles(
-            self.tsrs,
-            idx_u,
-            "blue",
-            ["ups", "ups (CTlag)", "ups (thermal mass)", "ups (ADJ - raw)"],
-        )
-
-        for i in range(4):
-            ax[i].grid()
-            ax[i].legend(prop={"weight": "bold", "size": 12})
-            ax[i].set_xlabel(
-                r"$\Delta$ PSAL [psu]" if i == 3 else "PSAL [psu]",
-                fontweight="bold",
-            )
-        ax[2].set_xlim(
-            [
-                np.nanmin(self.tsrs[0].PSAL) - 0.02,
-                np.nanmax(self.tsrs[0].PSAL) + 0.02,
-            ]
-        )
-        minmax = np.nanmax(
-            np.concatenate(
-                (
-                    np.abs(
-                        self.tsrs[2].PSAL_ADJ.values[idx_u]
-                        - self.tsrs[0].PSAL.values[idx_u]
-                    ),
-                    np.abs(
-                        self.tsrs[2].PSAL_ADJ.values[idx_d]
-                        - self.tsrs[0].PSAL.values[idx_d]
-                    ),
-                )
-            )
-        )
-        ax[3].set_xlim([-minmax, minmax])
-        ax[0].set_ylabel("Depth [m]", fontweight="bold")
-
-        plt.tight_layout()
-
-    # def display_tsr_raw(self):
-    #     """
-    #     Display for ~20 mid profiles of:
-    #         (1) TEMP: in situ temperature
-    #         (2) PSAL: raw salinity
-    #         (3) DENSITY: density
-
-    #     """
-
-    #     variables = ["TEMP", "PSAL", "DENSITY"]
-    #     units = [r" [$^{\circ}$C]", " [psu]", r" [kg/m$^3$]"]
-    #     colormaps = ["RdYlBu_r", "viridis", "Blues"]
-    #     cs = {}
-
-    #     fig, ax = plt.subplots(nrows=3, figsize=(7, 10), sharex=True, sharey=False)
-    #     # Loop through variables to create scatter plots
-    #     for i, var in enumerate(variables):
-    #         data = self.tsrs[var] - (1000 if var == "DENSITY" else 0)  # Adjust density
-    #         vmin, vmax = np.nanmin(data), np.nanmax(data)
-    #         vmin += 0.1 * (vmax - vmin)
-    #         vmax -= 0.1 * (vmax - vmin)
-
-    #         cs[i] = ax[i].scatter(
-    #             self.tsrs.TIME,
-    #             -self.tsrs.DEPTH,
-    #             c=data,
-    #             cmap=colormaps[i],
-    #             vmin=vmin,
-    #             vmax=vmax,
-    #         )
-    #         cbar = plt.colorbar(cs[i], ax=ax[i])
-    #         cbar.set_label(var + units[i], fontsize=12, fontweight="bold")
-    #         ax[i].set_ylabel("Depth [m]", fontweight="bold")
-
-    #     ax[2].set_xlabel("TIME", fontweight="bold")
-    #     plt.tight_layout()
-
-    # def display_tsr_adj(self):
-    #     """
-    #     Display for ~20 mid profiles (all=0) or the entire section (all=1) of:
-    #         (1) PSAL: raw salinity
-    #         (2) PSAL_ADJ: ADJ salinity
-    #         (3) raw - ADJ salinity
-
-    #     """
-
-    #     prof_idx = self.tsr.PROFILE_NUMBER
-    #     unique_prof = np.unique(prof_idx)
-    #     prof1 = int(np.nanmedian(unique_prof))
-    #     prof2 = prof1 + int(np.nanmin([unique_prof.shape[0] / 2, 20]))
-    #     self.tsrs = self.tsr.where((prof_idx > prof1) & (prof_idx < prof2), drop=True)
-
-    #     if all == 1:  # Display the entire deployment
-    #         self.tsrs = self.tsr
-
-    #     variables = ["PSAL", "PSAL_ADJ", "diff"]
-    #     colormaps = ["viridis", "viridis", "RdBu_r"]
-    #     cs = {}
-
-    #     fig, ax = plt.subplots(
-    #         nrows=3, figsize=(7 if all == 0 else 14, 10), sharex=True, sharey=False
-    #     )
-    #     # Loop through variables to create scatter plots
-    #     for i, var in enumerate(variables):
-    #         data = (
-    #             self.tsrs["PSAL"] - self.tsrs["PSAL_ADJ"]
-    #             if var == "diff"
-    #             else self.tsrs[var]
-    #         )
-    #         vmin, vmax = np.nanmin(data), np.nanmax(data)
-    #         vmin += 0.1 * (vmax - vmin)
-    #         vmax -= 0.1 * (vmax - vmin)
-
-    #         if i == 2:
-    #             cs[i] = ax[i].scatter(
-    #                 self.tsrs.TIME,
-    #                 -self.tsrs.DEPTH,
-    #                 c=data,
-    #                 cmap=colormaps[i],
-    #                 vmin=-0.8 * np.nanmin([np.abs(vmin), np.abs(vmax)]),
-    #                 vmax=0.8 * np.nanmin([np.abs(vmin), np.abs(vmax)]),
-    #             )
-    #         else:
-    #             cs[i] = ax[i].scatter(
-    #                 self.tsrs.TIME,
-    #                 -self.tsrs.DEPTH,
-    #                 c=data,
-    #                 cmap=colormaps[i],
-    #                 vmin=vmin,
-    #                 vmax=vmax,
-    #             )
-    #         cbar = plt.colorbar(cs[i], ax=ax[i])
-    #         if i == 2:
-    #             cbar.set_label("PSAL - PSAL_ADJ [psu]", fontsize=12, fontweight="bold")
-    #         else:
-    #             cbar.set_label(var + " [psu]", fontsize=12, fontweight="bold")
-    #         ax[i].set_ylabel("Depth [m]", fontweight="bold")
-
-    #     ax[2].set_xlabel("TIME", fontweight="bold")
-    #     plt.tight_layout()
+        fig.tight_layout()
+        plt.show(block=True)
