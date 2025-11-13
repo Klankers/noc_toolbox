@@ -3,6 +3,7 @@ from toolbox.steps.base_test import BaseTest, register_qc, flag_cols
 
 #### Custom imports ####
 import polars as pl
+import xarray as xr
 import matplotlib
 import matplotlib.pyplot as plt
 
@@ -40,7 +41,16 @@ class impossible_location_test(BaseTest):
                 .otherwise(4).alias(f"{label}_QC")
             )
 
-        self.flags = self.df.select(pl.col("^.*_QC$"))
+        # Convert back to xarray
+        flags = self.df.select(pl.col("^.*_QC$"))
+        self.flags = xr.Dataset(
+            data_vars={
+                col: ("N_MEASUREMENTS", flags[col].to_numpy())
+                for col in flags.columns
+            },
+            coords={"N_MEASUREMENTS": self.data["N_MEASUREMENTS"]}
+        )
+
         return self.flags
 
     def plot_diagnostics(self):
