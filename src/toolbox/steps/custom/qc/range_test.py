@@ -116,14 +116,17 @@ class range_test(BaseTest):
 
             for i in range(10):
                 # Plot by flag number
-                plot_data = self.data[var].where(self.data[f"{var}_QC"] == i, drop=True)
+                plot_data = self.data[
+                    [var, "N_MEASUREMENTS"]
+                ].where(self.data[f"{var}_QC"] == i, drop=True)
+
                 if len(plot_data) == 0:
                     continue
 
                 # Plot the data
                 ax.plot(
-                    range(len(plot_data)),
-                    plot_data,
+                    plot_data["N_MEASUREMENTS"],
+                    plot_data[var],
                     c=flag_cols[i],
                     ls="",
                     marker="o",
@@ -134,13 +137,13 @@ class range_test(BaseTest):
                 for bound in bounds:
                     ax.axhline(bound, ls="--", c="k")
 
-                ax.set(
-                    xlabel="Index",
-                    ylabel=var,
-                    title=f"{var} Range Test",
-                )
+            ax.set(
+                xlabel="Index",
+                ylabel=var,
+                title=f"{var} Range Test",
+            )
 
-                ax.legend(title="Flags", loc="upper right")
+            ax.legend(title="Flags", loc="upper right")
 
         fig.tight_layout()
         plt.show(block=True)

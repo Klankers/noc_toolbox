@@ -4,6 +4,7 @@ from toolbox.steps.base_test import BaseTest, register_qc, flag_cols
 #### Custom imports ####
 import matplotlib.pyplot as plt
 import polars as pl
+import xarray as xr
 import matplotlib
 
 @register_qc
