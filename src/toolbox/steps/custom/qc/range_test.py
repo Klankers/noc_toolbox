@@ -120,7 +120,7 @@ class range_test(BaseTest):
                     [var, "N_MEASUREMENTS"]
                 ].where(self.data[f"{var}_QC"] == i, drop=True)
 
-                if len(plot_data) == 0:
+                if len(plot_data[var]) == 0:
                     continue
 
                 # Plot the data
