@@ -6,8 +6,11 @@ import toolbox.utils.diagnostics as diag
 #### Custom imports ####
 import xarray as xr
 import numpy as np
+import pandas as pd
+import pvlib
 import matplotlib.pyplot as plt
 import matplotlib as mpl
+from tqdm import tqdm
 
 
 @register_step
@@ -170,3 +173,195 @@ class chla_deep_correction(BaseStep, QCHandlingMixin):
         fig.tight_layout()
         plt.show(block=True)
 
+@register_step
+class chla_quenching_correction(BaseStep, QCHandlingMixin):
+
+    step_name = "Chla Quenching Correction"
+
+    def run(self):
+        """
+        Example
+        -------
+
+        - name: "Chla Quenching Correction"
+          parameters:
+            method: "Argo"
+            apply_to: "CHLA"
+            mld_settings: {
+              "threshold_on": "TEMP",
+              "reference_depth": 10,
+              "threshold": 0.2
+              }
+          diagnostics: true
+        """
+
+        self.filter_qc()
+
+        # Get the function call for the specified method
+        methods = {
+            "argo": self.apply_xing2012_quenching_correction
+        }
+        if self.method.lower() not in methods.keys():
+            raise KeyError(f"Method {self.method} is not supported")
+        method_function = methods[self.method.lower()]
+
+        # Subset the data
+        # TODO: Remove time, lat and long from the subsetting by getting the first values of each for each profile
+        # TODO: and then passing this to the solar_angle function. This will significantly improve processing speed.
+        data_subset = self.data[
+            list({self.mld_settings["threshold_on"],
+                  "PROFILE_NUMBER",
+                  "TIME",
+                  "LATITUDE",
+                  "LONGITUDE",
+                  "DEPTH",
+                  "PRES",
+                  self.apply_to})
+        ]
+
+        # Apply the checks across individual profiles
+        profile_numbers = np.unique(data_subset["PROFILE_NUMBER"].dropna(dim="N_MEASUREMENTS"))
+        for profile_number in tqdm(profile_numbers, colour="green", desc='\033[97mProgress\033[0m', unit="profile"):
+
+            # Subset the data
+            profile = data_subset.where(data_subset["PROFILE_NUMBER"] == profile_number, drop=True)
+
+            corrected_chla = method_function(profile)
+
+            # Stitch back into the full data
+            profile_indices = np.where(self.data["PROFILE_NUMBER"] == profile_number)
+            self.data[self.apply_to][profile_indices] = corrected_chla
+
+        self.reconstruct_data()
+        self.update_qc()
+
+        if self.diagnostics:
+            self.generate_diagnostics()
+
+        self.context["data"] = self.data
+        return self.context
+
+    def calculate_mld(self, profile):
+
+        for k, v in self.mld_settings.items():
+            setattr(self, k, v)
+
+        # Only look at values that are below the reference depth
+        profile_subset = profile.where(
+            profile["DEPTH"] <= self.reference_depth,
+            drop=True
+        ).dropna(dim="N_MEASUREMENTS", subset=["DEPTH", self.threshold_on])
+
+        # Check there is still data to work with
+        if len(profile_subset["DEPTH"]) == 0:
+            return np.nan
+
+        # Find the reference point and return nan if it cant be found near the reference depth
+        reference_point = profile_subset[
+            ["DEPTH", self.threshold_on]
+        ].isel({"N_MEASUREMENTS": 0})
+        if reference_point["DEPTH"] < 2 * self.reference_depth:
+            return np.nan
+
+        # Find the difference from the reference value along the profile
+        reference_value = reference_point[self.threshold_on]
+        profile_subset["delta"] = profile_subset[self.threshold_on] - reference_value
+
+        # Filter out below-threshold points, then select the first (to pass the threshold)
+        profile_subset = profile_subset.where(
+            np.abs(profile_subset["delta"]) >= np.abs(self.threshold),
+            drop=True
+        )
+
+        # Return the value if found. Otherwise nan.
+        mld_value = np.nan
+        if len(profile_subset["DEPTH"]) != 0:
+            mld_value = float(profile_subset.isel({"N_MEASUREMENTS": 0})["DEPTH"])
+        return mld_value
+
+    def apply_xing2012_quenching_correction(self, profile):
+        """
+        Apply non-photochemical quenching (NPQ) correction following
+        Xing et al. (2012, *JGR–Oceans*, 117:C01019).
+
+        The maximum fluorescence within the mixed-layer depth (MLD)
+        is taken as the non-quenched reference. All shallower
+        (PRES < z_qd) values are adjusted upward to that maximum.
+        Correction is only applied when solar elevation > 0°.
+
+        Parameters
+        ----------
+        chlf : array-like of shape (N,)
+            Uncorrected chlorophyll fluorescence profile F_Chl(PRES).
+        pres : array-like of shape (N,)
+            Pressure (dbar), increasing with depth.
+        mld : float
+            Mixed-layer depth (m or dbar).
+        sun_angle : float
+            Solar elevation angle (degrees). NPQ correction is applied
+            only if `sun_angle > 0`.
+
+        Returns
+        -------
+        chl_corr : ndarray of shape (N,)
+            NPQ-corrected fluorescence profile.
+        npq : ndarray of shape (N,)
+            NPQ index = (chl_corr − chlf) / chlf.
+        z_qd : float
+            Quenching depth (dbar): pressure of maximum fluorescence
+            within the MLD. NaN if not computable or if night-time.
+
+        Notes
+        -----
+        • No correction is applied if solar elevation ≤ 0° (nighttime).
+        • Shallower than z_qd → fluorescence set to Fmax (non-quenched reference).
+        • Below MLD → unchanged.
+        """
+        chlf = np.asarray(profile[self.apply_to].values, dtype=float)
+        pres = np.asarray(profile["PRES"].values, dtype=float)
+        N = len(chlf)
+
+        # --- Calculate the MLD for this profile
+        mld = self.calculate_mld(profile)
+
+        # --- Night-time or invalid inputs: skip correction
+        time_utc = pd.to_datetime(profile["TIME"][0].values).tz_localize("UTC")
+        solar_position = pvlib.solarposition.get_solarposition(
+            time_utc,
+            profile["LATITUDE"][0].values,
+            profile["LONGITUDE"][0].values
+        )
+        sun_angle = solar_position["elevation"].values
+        if (
+                sun_angle <= 0
+                or N == 0
+                or len(pres) != N
+                or not np.isfinite(mld)
+                or mld >= 0
+                or np.all(np.isnan(chlf))
+        ):
+            return chlf
+
+        # --- Ensure increasing pressure
+        if pres[0] > pres[-1]:
+            pres = pres[::-1]
+            chlf = chlf[::-1]
+
+        # --- Identify max F_Chl within MLD
+        within_mld = pres <= mld
+        if not np.any(within_mld):
+            return chlf
+
+        chlf_mld = np.where(within_mld, chlf, np.nan)
+        if np.all(np.isnan(chlf_mld)):
+            return chlf
+
+        idx_max = np.nanargmax(chlf_mld)
+        z_qd = float(pres[idx_max])
+        F_max = chlf[idx_max]
+
+        # --- Apply correction: flatten shallower than z_qd
+        chl_corr = np.copy(chlf)
+        chl_corr[pres <= z_qd] = F_max
+
+        return chl_corr
