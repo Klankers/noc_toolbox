@@ -12,6 +12,21 @@ import matplotlib.pyplot as plt
 import matplotlib as mpl
 from tqdm import tqdm
 
+def check_chl_variables(self, allowed_requests):
+    user_request = self.apply_to
+    if user_request not in self.data.data_vars:
+        raise KeyError(f"The variable {user_request} does not exist in the data.")
+    if user_request not in allowed_requests:
+        raise KeyError(f"The variable {user_request} is not permitted for [{self.step_name}]")
+
+    if f"{user_request}_ADJUSTED" in self.data.data_vars:
+        self.log(f"User requested processing on {user_request} but {user_request}_ADJUSTED already exists. Using {user_request}_ADJUSTED...")
+        user_request = f"{user_request}_ADJUSTED"
+
+    output_as = user_request + ("_ADJUSTED" if "_ADJUSTED" not in user_request else "")
+
+    self.log(f"Processing {user_request}...")
+    return user_request, output_as
 
 @register_step
 class chla_deep_correction(BaseStep, QCHandlingMixin):
@@ -25,6 +40,7 @@ class chla_deep_correction(BaseStep, QCHandlingMixin):
 
         - name: "Chla Deep Correction"
           parameters:
+            apply_to: "CHLA"
             dark_value: null
             depth_threshold: 200
         diagnostics: true
@@ -35,13 +51,24 @@ class chla_deep_correction(BaseStep, QCHandlingMixin):
         """
         self.filter_qc()
 
+        # Check this step is being applied to a valid variable
+        self.apply_to, self.output_as = check_chl_variables(
+            self,
+            ["CHLA",
+             "CHLA_ADJUSTED"
+             "CHLA_FLUORESCENCE",
+             "CHLA_FLUORESCENCE_ADJUSTED"]
+        )
+
         self.compute_dark_value()
         self.apply_dark_correction()
 
         self.reconstruct_data()
         self.update_qc()
 
-        self.generate_qc({"CHLA_FLUORESCENCE_QC": ["CHLA_QC"]})
+        # Generate new QC if a non-adjusted variable was used in processing (this causes an _ADJUSTED variable to be added)"
+        if self.apply_to != self.output_as:
+            self.generate_qc({f"{self.output_as}_QC": [f"{self.apply_to}_QC"]})
 
         if self.diagnostics:
             self.generate_diagnostics()
@@ -81,18 +108,17 @@ class chla_deep_correction(BaseStep, QCHandlingMixin):
         if self.dark_value:
             self.log(f"Using dark value from config: {self.dark_value}")
             return self.dark_value
+        self.log(f"Computing dark value from profiles reaching >= {self.depth_threshold}m")
 
-        print(f"Computing dark value from profiles reaching >= {self.depth_threshold}m")
-
-        # Get DEPTH and CHLA data
-        missing_vars = {"TIME", "PROFILE_NUMBER", "DEPTH", "CHLA"} - set(self.data.data_vars)
+        # Get DEPTH and CHLA data TODO: Refactor below for user input variables
+        missing_vars = {"TIME", "PROFILE_NUMBER", "DEPTH", self.apply_to} - set(self.data.data_vars)
         if missing_vars:
             raise KeyError(f"[Chla Deep Correction] {missing_vars} could not be found in the data.")
 
         # Convert to pandas dataframe and interpolate the DEPTH data
-        interp_data = self.data[["TIME", "PROFILE_NUMBER", "DEPTH", "CHLA"]].to_pandas()
+        interp_data = self.data[["TIME", "PROFILE_NUMBER", "DEPTH", self.apply_to]].to_pandas()
         interp_data["DEPTH"] = interp_data.set_index("TIME")["DEPTH"].interpolate().reset_index(drop=True)
-        interp_data = interp_data.dropna(subset=["CHLA", "PROFILE_NUMBER"])
+        interp_data = interp_data.dropna(subset=[self.apply_to, "PROFILE_NUMBER"])
 
         # Subset the data to only deep measurements
         interp_data = interp_data[
@@ -100,8 +126,8 @@ class chla_deep_correction(BaseStep, QCHandlingMixin):
         ]
 
         # Remove profiles that do not have CHLA data below the threshold depth
-        deep_profiles = interp_data.groupby("PROFILE_NUMBER").agg({"CHLA": "count"}).reset_index()
-        deep_profiles = deep_profiles[deep_profiles["CHLA"] > 0]["PROFILE_NUMBER"].to_numpy()
+        deep_profiles = interp_data.groupby("PROFILE_NUMBER").agg({self.apply_to: "count"}).reset_index()
+        deep_profiles = deep_profiles[deep_profiles[self.apply_to] > 0]["PROFILE_NUMBER"].to_numpy()
         if len(deep_profiles) == 0:
             raise ValueError(
                 "[Chla Deep Correction] No deep profiles could be identified. "
@@ -111,17 +137,17 @@ class chla_deep_correction(BaseStep, QCHandlingMixin):
 
         # Extract the profile number, depth and chla data for all chla minima per profile
         self.chla_deep_minima = interp_data.loc[
-            interp_data.groupby("PROFILE_NUMBER")["CHLA"].idxmin(),
-            ["TIME", "PROFILE_NUMBER", "DEPTH", "CHLA"]
+            interp_data.groupby("PROFILE_NUMBER")[self.apply_to].idxmin(),
+            ["TIME", "PROFILE_NUMBER", "DEPTH", self.apply_to]
         ]
 
         # Compute median of minimum values
-        self.dark_value = np.nanmedian(self.chla_deep_minima["CHLA"])
+        self.dark_value = np.nanmedian(self.chla_deep_minima[self.apply_to])
         self.log(
             f"\nComputed dark value: {self.dark_value:.6f} "
             f"(median of {len(self.chla_deep_minima)} profile minimums)\n"
-            f"Min values range: {np.min(self.chla_deep_minima["CHLA"]):.6f} "
-            f"to {np.max(self.chla_deep_minima["CHLA"]):.6f}"
+            f"Min values range: {np.min(self.chla_deep_minima[self.apply_to]):.6f} "
+            f"to {np.max(self.chla_deep_minima[self.apply_to]):.6f}"
         )
 
     def apply_dark_correction(self):
@@ -130,21 +156,19 @@ class chla_deep_correction(BaseStep, QCHandlingMixin):
         """
 
         # Create adjusted chlorophyll variable
-        self.data["CHLA_FLUORESCENCE"] = xr.DataArray(
-            self.data["CHLA"] - self.dark_value,
-            dims=self.data["CHLA"].dims,
-            coords=self.data["CHLA"].coords,
+        self.data[self.output_as] = xr.DataArray(
+            self.data[self.apply_to] - self.dark_value,
+            dims=self.data[self.apply_to].dims,
+            coords=self.data[self.apply_to].coords,
         )
 
         # Copy and update attributes
-        if hasattr(self.data["CHLA"], 'attrs'):
-            self.data["CHLA_FLUORESCENCE"].attrs = self.data["CHLA"].attrs.copy()
-        self.data["CHLA_FLUORESCENCE"].attrs["comment"] = (
-            f"CHLA fluorescence with dark value correction (dark_value={self.dark_value:.6f})"
+        if hasattr(self.data[self.apply_to], 'attrs'):
+            self.data[self.output_as].attrs = self.data[self.apply_to].attrs.copy()
+        self.data[self.output_as].attrs["comment"] = (
+            f"{self.apply_to} with dark value correction (dark_value={self.dark_value:.6f})"
         )
-        self.data["CHLA_FLUORESCENCE"].attrs["dark_value"] = self.dark_value
-
-        self.log(f"Applied dark value correction: CHLA_FLUORESCENCE = CHLA_FLUORESCENCE - {self.dark_value:.6f}")
+        self.data[self.output_as].attrs["dark_value"] = self.dark_value
 
     def generate_diagnostics(self):
 
@@ -153,7 +177,7 @@ class chla_deep_correction(BaseStep, QCHandlingMixin):
         fig, ax = plt.subplots(figsize=(12, 8), dpi=200)
 
         ax.plot(
-            self.chla_deep_minima["CHLA"],
+            self.chla_deep_minima[self.apply_to],
             self.chla_deep_minima["DEPTH"],
             ls="",
             marker="o",
@@ -165,7 +189,7 @@ class chla_deep_correction(BaseStep, QCHandlingMixin):
         ax.legend(loc="upper right")
 
         ax.set(
-            xlabel="CHLA",
+            xlabel=f"{self.apply_to}",
             ylabel="DEPTH",
             title="Deep Minima Values",
         )
@@ -192,10 +216,26 @@ class chla_quenching_correction(BaseStep, QCHandlingMixin):
               "reference_depth": 10,
               "threshold": 0.2
               }
+            plot_profiles: []
           diagnostics: true
         """
 
         self.filter_qc()
+
+        # required for plotting the unprocessed data later
+        self.data_copy = self.data.copy(deep=True)
+
+        # Check this step is being applied to a valid variable.
+        self.apply_to, self.output_as = check_chl_variables(
+            self,
+            ["CHLA",
+             "CHLA_ADJUSTED"
+             "CHLA_FLUORESCENCE",
+             "CHLA_FLUORESCENCE_ADJUSTED"]
+        )
+        # If a new "_ADJUSTED" variable will be needed, create it
+        if self.apply_to != self.output_as:
+            self.data[self.output_as] = self.data[self.apply_to]
 
         # Get the function call for the specified method
         methods = {
@@ -205,18 +245,36 @@ class chla_quenching_correction(BaseStep, QCHandlingMixin):
             raise KeyError(f"Method {self.method} is not supported")
         method_function = methods[self.method.lower()]
 
+        # if the method required sunlight angle, find the inputs for the sun angle calculation
+        if self.method.lower() in ["argo"]:
+            self.sun_args = self.data[
+                ["PROFILE_NUMBER",
+                 "TIME",
+                 "DEPTH",
+                 "LATITUDE",
+                 "LONGITUDE"]
+            ].to_pandas()
+
+            # only look at the top 100m TODO: -DEPTH
+            self.sun_args = self.sun_args[
+                self.sun_args["DEPTH"] > -100
+            ]
+
+            self.sun_args = self.sun_args.groupby(["PROFILE_NUMBER"]).agg(
+                {var: "median" for var in ["TIME", "LATITUDE", "LONGITUDE"]}
+            )
+
         # Subset the data
-        # TODO: Remove time, lat and long from the subsetting by getting the first values of each for each profile
-        # TODO: and then passing this to the solar_angle function. This will significantly improve processing speed.
+        method_variable_requirements = {
+            "argo": {
+                "PROFILE_NUMBER",
+                "DEPTH",
+                self.apply_to,
+                self.mld_settings["threshold_on"]
+            }
+        }
         data_subset = self.data[
-            list({self.mld_settings["threshold_on"],
-                  "PROFILE_NUMBER",
-                  "TIME",
-                  "LATITUDE",
-                  "LONGITUDE",
-                  "DEPTH",
-                  "PRES",
-                  self.apply_to})
+            list(method_variable_requirements[self.method.lower()])
         ]
 
         # Apply the checks across individual profiles
@@ -230,10 +288,14 @@ class chla_quenching_correction(BaseStep, QCHandlingMixin):
 
             # Stitch back into the full data
             profile_indices = np.where(self.data["PROFILE_NUMBER"] == profile_number)
-            self.data[self.apply_to][profile_indices] = corrected_chla
+            self.data[self.output_as][profile_indices] = corrected_chla
 
         self.reconstruct_data()
         self.update_qc()
+
+        # Generate new QC if a non-adjusted variable was used in processing (this causes an _ADJUSTED variable to be added)"
+        if self.apply_to != self.output_as:
+            self.generate_qc({f"{self.output_as}_QC": [f"{self.apply_to}_QC"]})
 
         if self.diagnostics:
             self.generate_diagnostics()
@@ -247,6 +309,7 @@ class chla_quenching_correction(BaseStep, QCHandlingMixin):
             setattr(self, k, v)
 
         # Only look at values that are below the reference depth
+        # TODO: -DEPTH
         profile_subset = profile.where(
             profile["DEPTH"] <= self.reference_depth,
             drop=True
@@ -257,9 +320,10 @@ class chla_quenching_correction(BaseStep, QCHandlingMixin):
             return np.nan
 
         # Find the reference point and return nan if it cant be found near the reference depth
-        reference_point = profile_subset[
-            ["DEPTH", self.threshold_on]
-        ].isel({"N_MEASUREMENTS": 0})
+        # TODO: -DEPTH
+        reference_point = profile_subset.isel(
+            {"N_MEASUREMENTS": np.nanargmax(profile_subset["DEPTH"])},
+        )
         if reference_point["DEPTH"] < 2 * self.reference_depth:
             return np.nan
 
@@ -318,50 +382,96 @@ class chla_quenching_correction(BaseStep, QCHandlingMixin):
         • Below MLD → unchanged.
         """
         chlf = np.asarray(profile[self.apply_to].values, dtype=float)
-        pres = np.asarray(profile["PRES"].values, dtype=float)
+        depth = np.asarray(profile["DEPTH"].values, dtype=float)
         N = len(chlf)
 
         # --- Calculate the MLD for this profile
+        # TODO: -DEPTH
         mld = self.calculate_mld(profile)
 
         # --- Night-time or invalid inputs: skip correction
-        time_utc = pd.to_datetime(profile["TIME"][0].values).tz_localize("UTC")
-        solar_position = pvlib.solarposition.get_solarposition(
-            time_utc,
-            profile["LATITUDE"][0].values,
-            profile["LONGITUDE"][0].values
-        )
+        profile_number = int(profile["PROFILE_NUMBER"][0])
+        time, lat, long = self.sun_args.loc[profile_number].to_numpy()
+        time_utc = pd.to_datetime(time).tz_localize("UTC")
+        solar_position = pvlib.solarposition.get_solarposition(time_utc, lat, long)
         sun_angle = solar_position["elevation"].values
         if (
                 sun_angle <= 0
                 or N == 0
-                or len(pres) != N
+                or len(depth) != N
                 or not np.isfinite(mld)
                 or mld >= 0
                 or np.all(np.isnan(chlf))
         ):
             return chlf
 
-        # --- Ensure increasing pressure
-        if pres[0] > pres[-1]:
-            pres = pres[::-1]
-            chlf = chlf[::-1]
-
         # --- Identify max F_Chl within MLD
-        within_mld = pres <= mld
+        # TODO: -DEPTH
+        within_mld = depth >= mld
         if not np.any(within_mld):
             return chlf
 
         chlf_mld = np.where(within_mld, chlf, np.nan)
-        if np.all(np.isnan(chlf_mld)):
-            return chlf
-
-        idx_max = np.nanargmax(chlf_mld)
-        z_qd = float(pres[idx_max])
-        F_max = chlf[idx_max]
+        idx_max, chlf_max = np.nanargmax(chlf_mld), np.nanmax(chlf_mld)
+        chlf_max_depth = float(depth[idx_max])
 
         # --- Apply correction: flatten shallower than z_qd
+        #TODO: -DEPTH
         chl_corr = np.copy(chlf)
-        chl_corr[pres <= z_qd] = F_max
+        chl_corr[(depth >= chlf_max_depth) & (~np.isnan(chlf))] = chlf_max
 
         return chl_corr
+
+    def generate_diagnostics(self):
+        mpl.use("tkagg")
+
+        if len(self.plot_profiles) == 0:
+            self.log("To see diagnostics, please specify the plot_profiles setting.")
+            return
+
+        nrows = int(np.ceil(len(self.plot_profiles) / 3))
+        fig, axs = plt.subplots(nrows=nrows, ncols=3, figsize=(12, nrows * 6), dpi=200)
+
+        for profile_number, ax in zip(self.plot_profiles, axs.flatten()):
+
+            for data, var, col, label in zip(
+                    [self.data_copy, self.data],
+                    [self.apply_to, self.output_as],
+                    ["r", "b"],
+                    ["Uncorrected", "Corrected"]
+            ):
+                # Select the raw profile data
+                profile = data.where(
+                    data["PROFILE_NUMBER"] == profile_number,
+                    drop=True
+                ).dropna(dim="N_MEASUREMENTS", subset=[var, "DEPTH"])
+
+                if len(profile[var]) == 0:
+                    ax.text(0.5, 0.5,
+                            f"Missing Data\n--Prof. {profile_number}--",
+                            ha='center', va='center',
+                            transform=ax.transAxes)
+                    continue
+
+                ax.plot(
+                    profile[var],
+                    profile["DEPTH"],
+                    c=col,
+                    ls="",
+                    marker="o",
+                    label=label
+                )
+
+                ax.set(
+                    xlabel=self.apply_to,
+                    ylabel="DEPTH",
+                )
+
+                ax.legend(
+                    title=f"Prof. {profile_number}",
+                    loc="lower right"
+                )
+
+        fig.suptitle("Quenching Correction")
+        fig.tight_layout()
+        plt.show(block=True)
