@@ -161,7 +161,7 @@ class AdjustSalinity(BaseStep, QCHandlingMixin):
         # TODO: TIME_CTD checking
 
         # Required for plotting later
-        self.data_copy = self.data.copy()
+        self.data_copy = self.data.copy(deep=True)
 
         # Check if TIME_CTD exists
         self.time_col = "TIME_CTD"
