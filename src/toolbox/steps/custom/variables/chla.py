@@ -253,15 +253,16 @@ class chla_quenching_correction(BaseStep, QCHandlingMixin):
                  "DEPTH",
                  "LATITUDE",
                  "LONGITUDE"]
-            ].to_pandas()
+            ].to_pandas().dropna()
 
-            # only look at the top 100m TODO: -DEPTH
-            self.sun_args = self.sun_args[
-                self.sun_args["DEPTH"] > -100
-            ]
-
-            self.sun_args = self.sun_args.groupby(["PROFILE_NUMBER"]).agg(
-                {var: "median" for var in ["TIME", "LATITUDE", "LONGITUDE"]}
+            # only look at the values nearest the surface and find when and where they were taken
+            self.sun_args = (
+                self.sun_args.groupby(["PROFILE_NUMBER"])
+                .apply(lambda x: x.nlargest(50, "DEPTH"))
+                .reset_index(drop=True)
+                .groupby(["PROFILE_NUMBER"]).agg(
+                    {var: "median" for var in ["TIME", "LATITUDE", "LONGITUDE"]}
+                )
             )
 
         # Subset the data
@@ -279,7 +280,7 @@ class chla_quenching_correction(BaseStep, QCHandlingMixin):
 
         # Apply the checks across individual profiles
         profile_numbers = np.unique(data_subset["PROFILE_NUMBER"].dropna(dim="N_MEASUREMENTS"))
-        for profile_number in tqdm(profile_numbers, colour="green", desc='\033[97mProgress\033[0m', unit="profile"):
+        for profile_number in tqdm(profile_numbers, colour="green", desc='\033[97mProgress\033[0m', unit="prof"):
 
             # Subset the data
             profile = data_subset.where(data_subset["PROFILE_NUMBER"] == profile_number, drop=True)
