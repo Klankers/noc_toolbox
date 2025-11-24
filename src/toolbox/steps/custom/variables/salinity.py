@@ -7,6 +7,7 @@ import toolbox.utils.diagnostics as diag
 import matplotlib.pyplot as plt
 import matplotlib as mpl
 from scipy import interpolate
+from tqdm import tqdm
 import xarray as xr
 import numpy as np
 import gsw
@@ -227,7 +228,7 @@ class AdjustSalinity(BaseStep, QCHandlingMixin):
 
         # TODO: The following could be optimized using xarray groupby() applying a user defined CTLag function
         # Loop through all good profiles and store the optimal C-T lag for each.
-        for i, profile_number in enumerate(profile_numbers):
+        for i, profile_number in enumerate(tqdm(profile_numbers, colour="green", desc='\033[97mProgress\033[0m', unit="prof")):
             profile = self.data.where((self.data["PROFILE_NUMBER"] == profile_number), drop=True)
             if len(profile[self.time_col]) > 3 * self.filter_window_size:
                 optimal_lag = compute_optimal_lag(profile, self.filter_window_size, self.time_col)
