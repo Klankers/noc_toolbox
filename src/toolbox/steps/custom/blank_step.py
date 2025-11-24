@@ -6,9 +6,6 @@ from toolbox.utils.qc_handling import QCHandlingMixin
 import toolbox.utils.diagnostics as diag
 
 #### Custom imports ####
-import polars as pl
-import numpy as np
-import gsw
 
 
 @register_step
