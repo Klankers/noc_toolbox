@@ -125,6 +125,10 @@ class QCHandlingMixin:
                 for qc_parent in qc_parents[1:]:
                     self.data[qc_child][:] = qc_combinatrix[self.data[qc_child], self.data[qc_parent]]
 
+            # Flag nans as missing values
+            is_nan = np.isnan(self.data[f"{qc_child[:-3]}"])
+            self.data[f"{qc_child}"] = xr.where(is_nan, 9, self.data[f"{qc_child}"])
+
         # Check for any new columns that are missing QC
         all_var_names = {
             var for var in self.data.data_vars
