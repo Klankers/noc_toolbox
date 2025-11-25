@@ -1,5 +1,3 @@
-"""Class definition for deriving CTD variables."""
-
 #### Mandatory imports ####
 from toolbox.steps.base_step import BaseStep, register_step
 from toolbox.utils.qc_handling import QCHandlingMixin
@@ -14,15 +12,15 @@ from scipy.interpolate import interp1d
 
 
 @register_step
-class BlankStep(BaseStep, QCHandlingMixin):
+class BBPFromBeta(BaseStep, QCHandlingMixin):
 
-    step_name = "Blank Step"
+    step_name = "BBP from Beta"
 
     def run(self):
         """
         Example
         -------
-        - name: "Find Profile Direction"
+        - name: "BBP from Beta"
           parameters:
             apply_to: "BBP700"
           diagnostics: false
@@ -44,13 +42,7 @@ class BlankStep(BaseStep, QCHandlingMixin):
         ]
 
         # Interp DEPTH, TEMP and PRAC_SALINITY
-        data_subset = data_subset.interp(
-            coords={
-                "DEPTH": data_subset["TIME"],
-                "TEMP": data_subset["TIME"],
-                "PRAC_SALINITY": data_subset["TIME"]
-            }
-        )
+
 
         # Apply the correction
         bbp_corrected = gt.flo_functions.flo_bback_total(
@@ -60,6 +52,9 @@ class BlankStep(BaseStep, QCHandlingMixin):
             self.theta,
             700,
             self.xfactor)
+
+        # Apply spike detection to sepparate spikes and baseline data
+        bbp_baseline, bbp_spikes = gt.cleaning.despike(bbp_corrected, 7, spike_method='minmax')
 
         # Stitch back into the data
         self.data[self.apply_to][:] = bbp_corrected
