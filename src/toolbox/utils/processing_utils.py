@@ -25,23 +25,32 @@ def find_nans(data: np.ndarray):
     non_nan_indices = np.nonzero(~nan_mask)[0]
     return nan_mask, nan_indices, non_nan_indices
 
-def interpolate_nans(coords, data):
+def interpolate_nans(data, coords):
     """
     Fills nan values in y using interpolation over x.
     x and y must have the same dimensions.
 
     Parameters
     ----------
-    coords : np.ndarray
-        1D array of size N which the data will be interpolated over
     data : np.ndarray
         1D array of size N to interpolate
+    coords : np.ndarray
+        1D array of size N which the data will be interpolated over
 
     Returns
     -------
     filled_data : np.ndarray
         data with nans filled using linear interpolation
     """
+
+    # Convert datetimes to floats
+    args = [np.array(data), np.array(coords)]
+    for i, array in enumerate(args):
+        if np.issubdtype(array.dtype, np.datetime64):
+            elapsed_time = (args[i] - args[i][0]) / np.timedelta64(1, "s")
+            args[i] = elapsed_time
+
+    data, coords = args
     non_nan_mask = ~np.isnan(data)
     filled_data = np.interp(
         coords,
@@ -49,3 +58,30 @@ def interpolate_nans(coords, data):
         data[non_nan_mask]
     )
     return filled_data
+
+# ----------------------------- Filtering ---------------------------------
+def remove_outliers(data):
+    """
+    Removes outliers (including NaNs) from data. Exclusion is based on
+    inter-quartile range.
+
+    Parameters
+    ----------
+    data : np.ndarray | list
+        1D array of size N to interpolate
+
+    Returns
+    -------
+    filtered_data : np.ndarray
+        data with outliers removed
+
+    """
+    data = np.array(data)
+    data = data[np.isfinite(data)]  # remove NaNs
+    if len(data) == 0:
+        return data
+    q1, q3 = np.percentile(data, [25, 75])
+    iqr = q3 - q1
+    lower, upper = q1 - 1.5 * iqr, q3 + 1.5 * iqr
+    filtered_data = data[(data >= lower) & (data <= upper)]
+    return filtered_data

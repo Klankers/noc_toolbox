@@ -1,14 +1,15 @@
 #### Mandatory imports ####
 from toolbox.steps.base_step import BaseStep, register_step
 from toolbox.utils.qc_handling import QCHandlingMixin
+from toolbox.utils.processing_utils import *
 import toolbox.utils.diagnostics as diag
 
 #### Custom imports ####
 import xarray as xr
 import matplotlib.pyplot as plt
+import matplotlib as mpl
 import numpy as np
 import glidertools as gt
-from scipy.interpolate import interp1d
 
 
 @register_step
@@ -23,6 +24,9 @@ class BBPFromBeta(BaseStep, QCHandlingMixin):
         - name: "BBP from Beta"
           parameters:
             apply_to: "BBP700"
+            output_as: "BBP700"
+            theta: 124
+            xfactor: 1.076
           diagnostics: false
 
         Returns
@@ -32,7 +36,7 @@ class BBPFromBeta(BaseStep, QCHandlingMixin):
         self.filter_qc()
 
         # Get the required variables
-        data_subset = self.data[
+        self.data_subset = self.data[
             ["TIME",
              "PROFILE_NUMBER",
              "DEPTH",
@@ -42,25 +46,32 @@ class BBPFromBeta(BaseStep, QCHandlingMixin):
         ]
 
         # Interp DEPTH, TEMP and PRAC_SALINITY
-
+        for var in ["DEPTH", "TEMP", "PRAC_SALINITY"]:
+            self.data_subset[var][:] = interpolate_nans(
+                self.data_subset[var],
+                self.data_subset["TIME"]
+            )
 
         # Apply the correction
         bbp_corrected = gt.flo_functions.flo_bback_total(
-            data_subset[self.apply_to],
-            data_subset['TEMP'],
-            data_subset['PRAC_SALINITY'],
+            self.data_subset[self.apply_to],
+            self.data_subset["TEMP"],
+            self.data_subset["PRAC_SALINITY"],
             self.theta,
             700,
             self.xfactor)
 
-        # Apply spike detection to sepparate spikes and baseline data
-        bbp_baseline, bbp_spikes = gt.cleaning.despike(bbp_corrected, 7, spike_method='minmax')
-
         # Stitch back into the data
-        self.data[self.apply_to][:] = bbp_corrected
+        self.data[self.output_as] = bbp_corrected
 
         self.reconstruct_data()
         self.update_qc()
+
+        # Generate QC if a new variable is added. Otherwise warn the user that input is being overwritten.
+        if self.apply_to != self.output_as:
+            self.generate_qc({f"{self.output_as}_QC": [f"{self.apply_to}_QC"]})
+        else:
+            self.log_warn(f"'apply_to' and 'output_as' are the same. This will cause {self.apply_to} to be overwritten.")
 
         if self.diagnostics:
             self.generate_diagnostics()
@@ -69,4 +80,100 @@ class BBPFromBeta(BaseStep, QCHandlingMixin):
         return self.context
 
     def generate_diagnostics(self):
-        pass
+        mpl.use("tkagg")
+
+        # Clean both datasets
+        beta_clean = remove_outliers(self.data_subset[self.apply_to])
+        bbp_clean = remove_outliers(self.data[self.output_as])
+
+        # Plot
+        plt.figure(figsize=(10, 6))
+        plt.boxplot([beta_clean, bbp_clean],
+                    vert=True, patch_artist=True,
+                    labels=["Beta", "BBP"])
+
+        plt.title("Beta vs BBP")
+        plt.ylabel("Value")
+        plt.grid(True, linestyle="--", alpha=0.6)
+        plt.show(block=True)
+
+@register_step
+class IsolateBBPSpikes(BaseStep, QCHandlingMixin):
+
+    step_name = "Isolate BBP Spikes"
+
+    def run(self):
+        """
+         Example
+         -------
+         - name: "Isolate BBP Spikes"
+           parameters:
+             apply_to: "BBP700"
+             window_size: 50
+             method: "median"
+           diagnostics: false
+
+         Returns
+         -------
+
+         """
+        self.filter_qc()
+
+        self.baseline, self.spikes = gt.cleaning.despike(
+            self.data[self.apply_to],
+            self.window_size,
+            spike_method=self.method
+        )
+
+        self.data[f"{self.apply_to}_BASELINE"] = self.baseline
+        self.data[f"{self.apply_to}_SPIKES"] = self.spikes
+
+        self.reconstruct_data()
+        self.update_qc()
+
+        # Generate QC if a new variable is added. Otherwise warn the user that input is being overwritten.
+        self.generate_qc(
+            {
+                f"{self.apply_to}_BASELINE_QC": [f"{self.apply_to}_QC"],
+                f"{self.apply_to}_SPIKES_QC": [f"{self.apply_to}_QC"],
+            }
+        )
+
+        if self.diagnostics:
+            self.generate_diagnostics()
+
+        self.context["data"] = self.data
+        return self.context
+
+    def generate_diagnostics(self):
+        mpl.use("tkagg")
+
+        raw = self.data[self.apply_to]
+
+        # Plot
+        fig, axs = plt.subplots(nrows=2, figsize=(10, 6), height_ratios=(2, 1), sharex=True)
+
+        # Plot original and baseline time series
+        axs[0].plot(self.data["TIME"][~np.isnan(raw)],
+                raw[~np.isnan(raw)],
+                ls="--", c="gray", label="Raw")
+        axs[0].plot(self.data["TIME"][~np.isnan(self.baseline)],
+                self.baseline[~np.isnan(self.baseline)],
+                c="b", alpha=0.5, label="Baseline")
+
+        # Plot spike points
+        axs[1].plot(self.data["TIME"][~np.isnan(self.spikes)],
+                self.spikes[~np.isnan(self.spikes)],
+                marker='o', c="r", label="Spikes")
+
+        for ax in axs:
+            ax.legend(loc="upper right")
+
+        ax.set(
+            xlabel="Time",
+            ylabel=self.apply_to,
+            title=f"{self.apply_to}: Baseline Timeseries & Spikes"
+        )
+
+        fig.tight_layout()
+        plt.show(block=True)
