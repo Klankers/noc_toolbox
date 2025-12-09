@@ -34,7 +34,7 @@ class PipelineManager(ConfigMirrorMixin):
         # init regular state
         self.pipelines = {}  # {pipeline_name: Pipeline instance}
         self.alignment_map = {}  # {standard_name: {pipeline_name: alias}}
-        self._contexts = None
+        self._contexts = {}
         self.settings = {}
         self._summary_ran = False
         # NEW: private config
@@ -117,6 +117,13 @@ class PipelineManager(ConfigMirrorMixin):
     def get_contexts(self):
         """Retrieve the context dictionary from each pipeline."""
         return {name: p._context for name, p in self.pipelines.items()}
+
+    def load_data(self, filepath, platform_name):
+        context = {
+            "data": xr.load_dataset(filepath)
+        }
+        self._contexts[platform_name] = context
+        print(f"[Pipeline Manager] {platform_name} sucessfully added added")
 
     def summarise_all_profiles(self) -> pd.DataFrame:
         """
