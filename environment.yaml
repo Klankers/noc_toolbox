@@ -34,3 +34,6 @@ dependencies:
   - black
   - pre-commit
 
+  # mau_noc_toolbox specific additions
+  - bokeh
+
