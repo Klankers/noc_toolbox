@@ -1,4 +1,4 @@
-name: gliders_test
+name: mau_noc_fork
 channels:
   - conda-forge
 dependencies:
