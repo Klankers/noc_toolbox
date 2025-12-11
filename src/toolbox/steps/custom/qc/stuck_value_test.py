@@ -29,24 +29,33 @@ class stuck_value_test(BaseTest):
         }
       diagnostics: true
     """
+
     test_name = "stuck value test"
 
     # Specify if test target variable is user-defined (if True, __init__ has to be redefined)
     dynamic = True
 
     def __init__(self, data, **kwargs):
-
         # Check the necessary kwargs are available
         required_kwargs = {"variables", "also_flag", "plot"}
         if not required_kwargs.issubset(set(kwargs.keys())):
-            raise KeyError(f"{required_kwargs - set(kwargs.keys())} are missing from {self.test_name} settings")
+            raise KeyError(
+                f"{required_kwargs - set(kwargs.keys())} are missing from {self.test_name} settings"
+            )
 
         # Specify the tests paramters from kwargs (config)
-        self.expected_parameters = {k: v for k, v in kwargs.items() if k in required_kwargs}
-        self.required_variables = list(set(self.expected_parameters["variables"].keys()))
+        self.expected_parameters = {
+            k: v for k, v in kwargs.items() if k in required_kwargs
+        }
+        self.required_variables = list(
+            set(self.expected_parameters["variables"].keys())
+        )
         self.qc_outputs = list(
-            set(f"{var}_QC" for var in self.required_variables) |
-            set(f"{var}_QC" for var in sum(self.expected_parameters["also_flag"].values(), []))
+            set(f"{var}_QC" for var in self.required_variables)
+            | set(
+                f"{var}_QC"
+                for var in sum(self.expected_parameters["also_flag"].values(), [])
+            )
         )
 
         if data is not None:
@@ -58,13 +67,11 @@ class stuck_value_test(BaseTest):
         self.flags = None
 
     def return_qc(self):
-
         # Subset the data
         self.data = self.data[self.required_variables]
 
         # Generate the variable-specific flags
         for var, n_stuck in self.variables.items():
-
             # remove nans
             var_data = self.data[var].dropna(dim="N_MEASUREMENTS")
 
@@ -77,9 +84,7 @@ class stuck_value_test(BaseTest):
 
             # Handle edge cases
             for index, step in zip([0, -1], [1, -1]):
-                stuck_value_mask[index] = (
-                    var_data[index] == var_data[index + step]
-                )
+                stuck_value_mask[index] = var_data[index] == var_data[index + step]
 
             # The remaining processing has to be in int dtype
             stuck_value_mask = stuck_value_mask.astype(int)
@@ -94,7 +99,7 @@ class stuck_value_test(BaseTest):
                 stuck_value_mask[start:end] = end - start
 
             # Convert the stuck values mask into flags
-            bad_values = (stuck_value_mask > n_stuck)
+            bad_values = stuck_value_mask > n_stuck
             stuck_value_mask[bad_values] = 4
             stuck_value_mask[~bad_values] = 1
 
@@ -109,7 +114,9 @@ class stuck_value_test(BaseTest):
                     self.data[f"{extra_var}_QC"] = self.data[f"{var}_QC"]
 
         # Select just the flags
-        self.flags = self.data[[var_qc for var_qc in self.data.data_vars if "_QC" in var_qc]]
+        self.flags = self.data[
+            [var_qc for var_qc in self.data.data_vars if "_QC" in var_qc]
+        ]
 
         return self.flags
 
@@ -118,26 +125,31 @@ class stuck_value_test(BaseTest):
 
         # If not plots were specified
         if len(self.plot) == 0:
-            print(f"WARNING: In '{self.test_name}', diagnostics were called but no variables were specified for plotting.")
+            print(
+                f"WARNING: In '{self.test_name}', diagnostics were called but no variables were specified for plotting."
+            )
             return
 
         # Plot the QC output
-        fig, axs = plt.subplots(nrows=len(self.plot), figsize=(8, 6), sharex=True, dpi=200)
+        fig, axs = plt.subplots(
+            nrows=len(self.plot), figsize=(8, 6), sharex=True, dpi=200
+        )
         if len(self.plot) == 1:
             axs = [axs]
 
         for ax, var in zip(axs, self.plot):
-
             # Check that the user specified var exists in the test set
             if f"{var}_QC" not in self.qc_outputs:
-                print(f"WARNING: Cannot plot {var}_QC as it was not included in this test.")
+                print(
+                    f"WARNING: Cannot plot {var}_QC as it was not included in this test."
+                )
                 continue
 
             for i in range(10):
                 # Plot by flag number
-                plot_data = self.data[
-                    [var, "N_MEASUREMENTS"]
-                ].where(self.data[f"{var}_QC"] == i, drop=True)
+                plot_data = self.data[[var, "N_MEASUREMENTS"]].where(
+                    self.data[f"{var}_QC"] == i, drop=True
+                )
 
                 if len(plot_data[var]) == 0:
                     continue

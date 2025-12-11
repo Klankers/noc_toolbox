@@ -7,6 +7,7 @@ import polars as pl
 import xarray as xr
 import matplotlib
 
+
 @register_qc
 class pressure_range_test(BaseTest):
     """
@@ -22,17 +23,17 @@ class pressure_range_test(BaseTest):
     qc_outputs = ["PRES_QC", "TEMP_QC", "CNDC_QC"]
 
     def return_qc(self):
-
         # Convert to polars
         self.df = pl.from_pandas(
-            self.data[self.required_variables].to_dataframe(),
-            nan_to_null=False
+            self.data[self.required_variables].to_dataframe(), nan_to_null=False
         )
 
         # Set flags
         self.df = self.df.with_columns(
-            pl.when(pl.col("PRES").is_between(-5, -2.4)).then(3)
-            .when(pl.col("PRES") < -5).then(4)
+            pl.when(pl.col("PRES").is_between(-5, -2.4))
+            .then(3)
+            .when(pl.col("PRES") < -5)
+            .then(4)
             .otherwise(1)
             .alias("PRES_QC")
         )
@@ -47,10 +48,9 @@ class pressure_range_test(BaseTest):
         flags = self.df.select(pl.col("^.*_QC$"))
         self.flags = xr.Dataset(
             data_vars={
-                col: ("N_MEASUREMENTS", flags[col].to_numpy())
-                for col in flags.columns
+                col: ("N_MEASUREMENTS", flags[col].to_numpy()) for col in flags.columns
             },
-            coords={"N_MEASUREMENTS": self.data["N_MEASUREMENTS"]}
+            coords={"N_MEASUREMENTS": self.data["N_MEASUREMENTS"]},
         )
 
         return self.flags
@@ -61,9 +61,7 @@ class pressure_range_test(BaseTest):
 
         for i in range(10):
             # Plot by flag number
-            plot_data = self.df.with_row_index().filter(
-                pl.col("PRES_QC") == i
-            )
+            plot_data = self.df.with_row_index().filter(pl.col("PRES_QC") == i)
             if len(plot_data) == 0:
                 continue
 

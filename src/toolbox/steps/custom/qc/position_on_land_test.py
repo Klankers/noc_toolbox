@@ -10,6 +10,7 @@ import xarray as xr
 import matplotlib
 import geopandas
 
+
 @register_qc
 class position_on_land_test(BaseTest):
     """
@@ -25,20 +26,14 @@ class position_on_land_test(BaseTest):
     qc_outputs = ["LATITUDE_QC", "LONGITUDE_QC"]
 
     def return_qc(self):
-
         # Convert to polars
         self.df = pl.from_pandas(
-            self.data[self.required_variables].to_dataframe(),
-            nan_to_null=False
+            self.data[self.required_variables].to_dataframe(), nan_to_null=False
         )
 
         # Concat the polygons into a MultiPolygon object
-        self.world = geopandas.read_file(
-            get_path("naturalearth.land")
-        )
-        land_polygons = sh.ops.unary_union(
-            self.world.geometry
-        )
+        self.world = geopandas.read_file(get_path("naturalearth.land"))
+        land_polygons = sh.ops.unary_union(self.world.geometry)
 
         # Check if lat, long coords fall within the area of the land polygons
         self.df = self.df.with_columns(
@@ -47,10 +42,11 @@ class position_on_land_test(BaseTest):
                 lambda x: sh.contains_xy(
                     land_polygons,
                     x.struct.field("LONGITUDE").to_numpy(),
-                    x.struct.field("LATITUDE").to_numpy()
+                    x.struct.field("LATITUDE").to_numpy(),
                 )
                 * 4
-            ).replace({0: 1})
+            )
+            .replace({0: 1})
             .alias("LONGITUDE_QC")
         )
         # Add the flags to LATITUDE as well.
@@ -60,10 +56,9 @@ class position_on_land_test(BaseTest):
         flags = self.df.select(pl.col("^.*_QC$"))
         self.flags = xr.Dataset(
             data_vars={
-                col: ("N_MEASUREMENTS", flags[col].to_numpy())
-                for col in flags.columns
+                col: ("N_MEASUREMENTS", flags[col].to_numpy()) for col in flags.columns
             },
-            coords={"N_MEASUREMENTS": self.data["N_MEASUREMENTS"]}
+            coords={"N_MEASUREMENTS": self.data["N_MEASUREMENTS"]},
         )
 
         return self.flags
@@ -77,9 +72,7 @@ class position_on_land_test(BaseTest):
 
         for i in range(10):
             # Plot by flag number
-            plot_data = self.df.filter(
-                pl.col("LATITUDE_QC") == i
-            )
+            plot_data = self.df.filter(pl.col("LATITUDE_QC") == i)
             if len(plot_data) == 0:
                 continue
 

@@ -13,7 +13,6 @@ import gsw
 
 @register_step
 class BlankStep(BaseStep, QCHandlingMixin):
-
     step_name = "Blank Step"
 
     def run(self):

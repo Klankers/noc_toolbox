@@ -63,12 +63,9 @@ def compute_optimal_lag(profile_data, filter_window_size, time_col):
     """
 
     # remove any rows where conductivity is bad (nan)
-    profile_data = profile_data[
-        [time_col,
-         "CNDC",
-         "PRES",
-         "TEMP"]
-    ].dropna(dim="N_MEASUREMENTS", subset=["CNDC"])
+    profile_data = profile_data[[time_col, "CNDC", "PRES", "TEMP"]].dropna(
+        dim="N_MEASUREMENTS", subset=["CNDC"]
+    )
 
     # Find the elapsed time in seconds from the start of the profile
     t0 = profile_data[time_col].values[0]
@@ -78,14 +75,11 @@ def compute_optimal_lag(profile_data, filter_window_size, time_col):
     conductivity_from_time = interpolate.interp1d(
         profile_data["ELAPSED_TIME[s]"].values,
         profile_data["CNDC"].values,
-        bounds_error=False
+        bounds_error=False,
     )
 
     # Specify the range time lags that the optimum will be found from. Column indexes are: (lag value, lag score)
-    time_lags = np.array(
-        [np.linspace(-2, 2, 41),
-         np.full(41, np.nan)]
-    ).T
+    time_lags = np.array([np.linspace(-2, 2, 41), np.full(41, np.nan)]).T
 
     # For each lag find its score and add it to the time_lags array
     for i, lag in enumerate(time_lags[:, 0].copy()):
@@ -95,9 +89,7 @@ def compute_optimal_lag(profile_data, filter_window_size, time_col):
         )
         # Derive salinity with the time shifted CNDC (spiking will be minimized when CNDC and TEMP are aligned)
         PSAL = gsw.conversions.SP_from_C(
-            time_shifted_conductivity,
-            profile_data["TEMP"],
-            profile_data["PRES"]
+            time_shifted_conductivity, profile_data["TEMP"], profile_data["PRES"]
         )
 
         # Smooth the salinity profile (to remove spiking)
@@ -155,7 +147,6 @@ class AdjustSalinity(BaseStep, QCHandlingMixin):
                 MUST APPLY self.data to self.context["data"] to save the changes
 
         """
-
 
         self.log(f"Running adjustment...")
         # TODO: TIME_CTD checking
@@ -218,7 +209,9 @@ class AdjustSalinity(BaseStep, QCHandlingMixin):
 
         # Estimate the CT lag every profile or 10 profiles for more than 300 profiles.
         # Note that profile_numbers is not a list of consecutive integers as some profiles may have been filtered out.
-        profile_numbers = np.unique(self.data["PROFILE_NUMBER"].dropna(dim="N_MEASUREMENTS").values)
+        profile_numbers = np.unique(
+            self.data["PROFILE_NUMBER"].dropna(dim="N_MEASUREMENTS").values
+        )
         if len(profile_numbers) > 300:
             profile_numbers = profile_numbers[::10]
 
@@ -228,50 +221,57 @@ class AdjustSalinity(BaseStep, QCHandlingMixin):
         # TODO: The following could be optimized using xarray groupby() applying a user defined CTLag function
         # Loop through all good profiles and store the optimal C-T lag for each.
         for i, profile_number in enumerate(profile_numbers):
-            profile = self.data.where((self.data["PROFILE_NUMBER"] == profile_number), drop=True)
+            profile = self.data.where(
+                (self.data["PROFILE_NUMBER"] == profile_number), drop=True
+            )
             if len(profile[self.time_col]) > 3 * self.filter_window_size:
-                optimal_lag = compute_optimal_lag(profile, self.filter_window_size, self.time_col)
+                optimal_lag = compute_optimal_lag(
+                    profile, self.filter_window_size, self.time_col
+                )
                 self.per_profile_optimal_lag[i, :] = [profile_number, optimal_lag]
 
         # Find median optimal time lag across all profiles
         median_lag = np.nanmedian(self.per_profile_optimal_lag[:, 1])
-        
+
         # Get a nanless subset of CNDC data
         nan_mask = self.data["CNDC"].isnull()
         data_subset = self.data[[self.time_col, "CNDC"]].where(~nan_mask, drop=True)
 
         # Find the elapsed time in seconds
         t0 = data_subset[self.time_col].values[0]
-        data_subset["ELAPSED_TIME[s]"] = (data_subset[self.time_col] - t0).dt.total_seconds()
-        
+        data_subset["ELAPSED_TIME[s]"] = (
+            data_subset[self.time_col] - t0
+        ).dt.total_seconds()
+
         # Resample the data using a shifted time
         CNDC_from_TIME = interpolate.interp1d(
-            data_subset["ELAPSED_TIME[s]"], 
-            data_subset["CNDC"], 
-            bounds_error=False
+            data_subset["ELAPSED_TIME[s]"], data_subset["CNDC"], bounds_error=False
         )
-        data_subset["CNDC"][:] = CNDC_from_TIME(data_subset["ELAPSED_TIME[s]"] + median_lag)
-        
+        data_subset["CNDC"][:] = CNDC_from_TIME(
+            data_subset["ELAPSED_TIME[s]"] + median_lag
+        )
+
         # Reinsert the time-shifted data back into self.data
         self.data["CNDC"][~nan_mask] = data_subset["CNDC"]
 
     def correct_thermal_lag(self):
-
         nan_mask = self.data["TEMP"].isnull()
-        data_subset = self.data[[self.time_col, "TEMP", "PRES"]].where(~nan_mask, drop=True)
+        data_subset = self.data[[self.time_col, "TEMP", "PRES"]].where(
+            ~nan_mask, drop=True
+        )
 
         # Find the elapsed time in seconds
         t0 = data_subset[self.time_col].values[0]
-        data_subset["ELAPSED_TIME[s]"] = (data_subset[self.time_col] - t0).dt.total_seconds()
+        data_subset["ELAPSED_TIME[s]"] = (
+            data_subset[self.time_col] - t0
+        ).dt.total_seconds()
 
         # TODO: Convert to xarray interpolation as interp1d doesn't get updated any more
         # Define a function that can estimate TEMP at any time point
         TEMP_from_TIME = interpolate.interp1d(
-            data_subset["ELAPSED_TIME[s]"], 
-            data_subset["TEMP"], 
-            bounds_error=False
+            data_subset["ELAPSED_TIME[s]"], data_subset["TEMP"], bounds_error=False
         )
-        
+
         # Resample the data onto a 1Hz sample rate timeseries
         TIME_1Hz_sampling = np.arange(0, data_subset["ELAPSED_TIME[s]"][-1], 1)
         TEMP_1Hz_sampling = TEMP_from_TIME(TIME_1Hz_sampling)
@@ -292,23 +292,27 @@ class AdjustSalinity(BaseStep, QCHandlingMixin):
         alpha = alpha_offset + alpha_slope / flow_rate
 
         # Set the filter coefficients
-        nyquist_frequency = 1/2  # Nyquist frequency for 1 Hz sampling (= sample frequency / 2)
+        nyquist_frequency = (
+            1 / 2
+        )  # Nyquist frequency for 1 Hz sampling (= sample frequency / 2)
         a = 4 * nyquist_frequency * alpha * tau / (1 + 4 * nyquist_frequency * tau)
         b = 1 - (2 * a / alpha)
 
         # Apply the filter
         TEMP_correction = np.full(n_resamples, 0.0)
         for i in range(1, n_resamples):
-            TEMP_correction[i] = -b * TEMP_correction[i - 1] + a * (TEMP_1Hz_sampling[i] - TEMP_1Hz_sampling[i - 1])
+            TEMP_correction[i] = -b * TEMP_correction[i - 1] + a * (
+                TEMP_1Hz_sampling[i] - TEMP_1Hz_sampling[i - 1]
+            )
         corrected_TEMP_1Hz_sampling = TEMP_1Hz_sampling - TEMP_correction
 
         # Resample the TEMP back onto the original time sampling
         corrected_TEMP_from_TIME = interpolate.interp1d(
-            TIME_1Hz_sampling, 
-            corrected_TEMP_1Hz_sampling, 
-            bounds_error=False
+            TIME_1Hz_sampling, corrected_TEMP_1Hz_sampling, bounds_error=False
         )
-        data_subset["TEMP"][:] = corrected_TEMP_from_TIME(data_subset["ELAPSED_TIME[s]"])
+        data_subset["TEMP"][:] = corrected_TEMP_from_TIME(
+            data_subset["ELAPSED_TIME[s]"]
+        )
 
         # Reinsert the corrected data back into self.data
         self.data["TEMP"][~nan_mask] = data_subset["TEMP"]
@@ -316,7 +320,10 @@ class AdjustSalinity(BaseStep, QCHandlingMixin):
     def display_CTLag(self):
         # Display optimal CTlag for each profile
         mpl.use("tkagg")
-        prof_min, prof_max = np.nanmin(self.per_profile_optimal_lag[:, 0]), np.nanmax(self.per_profile_optimal_lag[:, 0])
+        prof_min, prof_max = (
+            np.nanmin(self.per_profile_optimal_lag[:, 0]),
+            np.nanmax(self.per_profile_optimal_lag[:, 0]),
+        )
         tau_median = np.nanmedian(self.per_profile_optimal_lag[:, 1])
 
         fig, ax = plt.subplots(figsize=(14, 5))
@@ -329,7 +336,11 @@ class AdjustSalinity(BaseStep, QCHandlingMixin):
             label=f"Median CTlag: {tau_median:.2f}s",
         )
         ax.plot([prof_min, prof_max], [0, 0], "k")
-        ax.scatter(self.per_profile_optimal_lag[:, 0], self.per_profile_optimal_lag[:, 1], c="k")
+        ax.scatter(
+            self.per_profile_optimal_lag[:, 0],
+            self.per_profile_optimal_lag[:, 1],
+            c="k",
+        )
         ax.legend(prop={"weight": "bold"}, labelcolor="indianred")
         ax.grid(True, linestyle="--", alpha=0.5)
         ax.axis([prof_min, prof_max, -1, 1])
@@ -355,23 +366,29 @@ class AdjustSalinity(BaseStep, QCHandlingMixin):
 
         # Get corrected and uncorrected profiles
         uncorrected_profiles = self.data_copy.where(
-            (self.data["PROFILE_NUMBER"] > self.plot_profiles_in_range[0]) &
-            (self.data["PROFILE_NUMBER"] < self.plot_profiles_in_range[1]),
-            drop=True
+            (self.data["PROFILE_NUMBER"] > self.plot_profiles_in_range[0])
+            & (self.data["PROFILE_NUMBER"] < self.plot_profiles_in_range[1]),
+            drop=True,
         )
         corrected_profiles = self.data.where(
-            (self.data["PROFILE_NUMBER"] > self.plot_profiles_in_range[0]) &
-            (self.data["PROFILE_NUMBER"] < self.plot_profiles_in_range[1]),
-            drop=True
+            (self.data["PROFILE_NUMBER"] > self.plot_profiles_in_range[0])
+            & (self.data["PROFILE_NUMBER"] < self.plot_profiles_in_range[1]),
+            drop=True,
         )
 
         fig, axs = plt.subplots(ncols=2, figsize=(8, 8), sharex=True, sharey=True)
 
-        for ax, data, title in zip(axs, [uncorrected_profiles, corrected_profiles], ["Uncorrected", "Corrected"]):
-            for direction, col, label in zip([-1, 1], ["r", "b"], ["Descending", "Ascending"]):
-                plot_data = data[["DEPTH", "CNDC", "TEMP", "PRES", "PROFILE_DIRECTION"]].where(
-                    data["PROFILE_DIRECTION"] == direction
-                )
+        for ax, data, title in zip(
+            axs,
+            [uncorrected_profiles, corrected_profiles],
+            ["Uncorrected", "Corrected"],
+        ):
+            for direction, col, label in zip(
+                [-1, 1], ["r", "b"], ["Descending", "Ascending"]
+            ):
+                plot_data = data[
+                    ["DEPTH", "CNDC", "TEMP", "PRES", "PROFILE_DIRECTION"]
+                ].where(data["PROFILE_DIRECTION"] == direction)
                 plot_data["PRAC_SALINITY"] = gsw.conversions.SP_from_C(
                     plot_data["CNDC"],
                     plot_data["TEMP"],
@@ -384,14 +401,10 @@ class AdjustSalinity(BaseStep, QCHandlingMixin):
                     marker="o",
                     ls="",
                     c=col,
-                    label=label
+                    label=label,
                 )
 
-            ax.set(
-                xlabel="Practical Salinity",
-                ylabel="Depth",
-                title=title
-            )
+            ax.set(xlabel="Practical Salinity", ylabel="Depth", title=title)
             ax.legend(loc="upper right")
 
         fig.tight_layout()

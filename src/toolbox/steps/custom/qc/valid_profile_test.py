@@ -7,6 +7,7 @@ import polars as pl
 import xarray as xr
 import matplotlib
 
+
 @register_qc
 class valid_profile_test(BaseTest):
     """
@@ -26,11 +27,9 @@ class valid_profile_test(BaseTest):
     qc_outputs = ["PROFILE_NUMBER"]
 
     def return_qc(self):
-
         # Convert to polars
         self.df = pl.from_pandas(
-            self.data[self.required_variables].to_dataframe(),
-            nan_to_null=False
+            self.data[self.required_variables].to_dataframe(), nan_to_null=False
         )
 
         # Check profiles are of a given length
@@ -39,17 +38,17 @@ class valid_profile_test(BaseTest):
 
         # Find profiles that have no data between the sepcified depth ranges
         profile_ranges = self.df.group_by("PROFILE_NUMBER").agg(
-            (pl.col("DEPTH").is_between(*self.depth_range).any()).alias("in_depth_range")
+            (pl.col("DEPTH").is_between(*self.depth_range).any()).alias(
+                "in_depth_range"
+            )
         )
         self.df = self.df.join(profile_ranges, on="PROFILE_NUMBER", how="left")
 
         self.df = self.df.with_columns(
-            pl.when(
-                pl.col("count") < self.profile_length
-            ).then(4)
-            .when(
-                pl.col("in_depth_range").not_()
-            ).then(3)
+            pl.when(pl.col("count") < self.profile_length)
+            .then(4)
+            .when(pl.col("in_depth_range").not_())
+            .then(3)
             .otherwise(1)
             .alias("PROFILE_NUMBER_QC")
         )
@@ -58,10 +57,9 @@ class valid_profile_test(BaseTest):
         flags = self.df.select(pl.col("^.*_QC$"))
         self.flags = xr.Dataset(
             data_vars={
-                col: ("N_MEASUREMENTS", flags[col].to_numpy())
-                for col in flags.columns
+                col: ("N_MEASUREMENTS", flags[col].to_numpy()) for col in flags.columns
             },
-            coords={"N_MEASUREMENTS": self.data["N_MEASUREMENTS"]}
+            coords={"N_MEASUREMENTS": self.data["N_MEASUREMENTS"]},
         )
 
         return self.flags
@@ -97,4 +95,3 @@ class valid_profile_test(BaseTest):
 
         fig.tight_layout()
         plt.show(block=True)
-

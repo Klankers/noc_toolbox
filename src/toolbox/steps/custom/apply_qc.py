@@ -13,30 +13,35 @@ import numpy as np
 
 @register_step
 class ApplyQC(BaseStep):
-    
     step_name = "Apply QC"
 
     def organise_flags(self, new_flags):
         # Method for taking in new flags and cross checking against exiting flags, including upgrading flags when necessary.
 
         # Define combinatrix for handling flag upgrade behaviour
-        qc_combinatrix = np.array([
-            [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
-            [1, 1, 2, 3, 4, 5, 1, 1, 8, 9],
-            [2, 2, 2, 3, 4, 5, 2, 2, 8, 9],
-            [3, 3, 3, 3, 4, 3, 3, 3, 3, 9],
-            [4, 4, 4, 4, 4, 4, 4, 4, 4, 9],
-            [5, 5, 5, 3, 4, 5, 5, 5, 8, 9],
-            [6, 1, 2, 3, 4, 5, 6, 6, 8, 9],
-            [7, 1, 2, 3, 4, 5, 6, 7, 8, 9],
-            [8, 8, 8, 3, 4, 8, 8, 8, 8, 9],
-            [9, 9, 9, 9, 9, 9, 9, 9, 9, 9]
-        ])
+        qc_combinatrix = np.array(
+            [
+                [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+                [1, 1, 2, 3, 4, 5, 1, 1, 8, 9],
+                [2, 2, 2, 3, 4, 5, 2, 2, 8, 9],
+                [3, 3, 3, 3, 4, 3, 3, 3, 3, 9],
+                [4, 4, 4, 4, 4, 4, 4, 4, 4, 9],
+                [5, 5, 5, 3, 4, 5, 5, 5, 8, 9],
+                [6, 1, 2, 3, 4, 5, 6, 6, 8, 9],
+                [7, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+                [8, 8, 8, 3, 4, 8, 8, 8, 8, 9],
+                [9, 9, 9, 9, 9, 9, 9, 9, 9, 9],
+            ]
+        )
 
         # Update existing flag columns
-        flag_columns_to_update = set(new_flags.data_vars) & set(self.flag_store.data_vars)
+        flag_columns_to_update = set(new_flags.data_vars) & set(
+            self.flag_store.data_vars
+        )
         for column_name in flag_columns_to_update:
-            self.flag_store[column_name][:] = qc_combinatrix[self.flag_store[column_name], new_flags[column_name]]
+            self.flag_store[column_name][:] = qc_combinatrix[
+                self.flag_store[column_name], new_flags[column_name]
+            ]
 
         # Add new QC flag columns if they dont already exist
         flag_columns_to_add = set(new_flags.data_vars) - set(self.flag_store.data_vars)
@@ -45,26 +50,31 @@ class ApplyQC(BaseStep):
                 self.flag_store[column_name] = new_flags[column_name]
 
     def run(self):
-
         # Defining the order of operations
         if len(self.qc_settings.keys()) == 0:
-            raise KeyError("[Apply QC] No QC operations were specified in an ApplyQC step.")
+            raise KeyError(
+                "[Apply QC] No QC operations were specified in an ApplyQC step."
+            )
         else:
             invalid_requests = set(self.qc_settings.keys()) - set(QC_CLASSES.keys())
             if invalid_requests:
-                raise KeyError(f"[Apply QC] The following requested QC tests could not be found: {invalid_requests}")
+                raise KeyError(
+                    f"[Apply QC] The following requested QC tests could not be found: {invalid_requests}"
+                )
         queued_qc = [QC_CLASSES.get(key) for key in self.qc_settings.keys()]
 
         # Check if the data is in the context
         if "data" not in self.context:
-            raise ValueError("[Apply QC] No data found in context. Please load data first.")
+            raise ValueError(
+                "[Apply QC] No data found in context. Please load data first."
+            )
         else:
             self.log("Data found in context.")
         data = self.context["data"].copy()
 
         # Try and fetch the qc history from context and update it
         qc_history = self.context.setdefault("qc_history", {})
-        
+
         # Collect all of the required varible names and qc outputs
         all_required_variables = set({})
         test_qc_outputs_cols = set({})
@@ -104,13 +114,17 @@ class ApplyQC(BaseStep):
 
             # Update QC history
             for flagged_var in returned_flags.data_vars:
-                percent_flagged = (returned_flags[flagged_var].to_numpy() != 0).sum() / len(returned_flags)
-                qc_history.setdefault(flagged_var, []).append((qc_test_name, percent_flagged))
+                percent_flagged = (
+                    returned_flags[flagged_var].to_numpy() != 0
+                ).sum() / len(returned_flags)
+                qc_history.setdefault(flagged_var, []).append(
+                    (qc_test_name, percent_flagged)
+                )
 
             # Diagnostic plotting
             if self.diagnostics:
                 qc_test_instance.plot_diagnostics()
-                
+
             # Once finished, remove the test instance from memory
             del qc_test_instance
 

@@ -12,7 +12,6 @@ import matplotlib as mpl
 
 @register_step
 class chla_deep_correction(BaseStep, QCHandlingMixin):
-
     step_name = "Chla Deep Correction"
 
     def run(self):
@@ -82,23 +81,31 @@ class chla_deep_correction(BaseStep, QCHandlingMixin):
         print(f"Computing dark value from profiles reaching >= {self.depth_threshold}m")
 
         # Get DEPTH and CHLA data
-        missing_vars = {"TIME", "PROFILE_NUMBER", "DEPTH", "CHLA"} - set(self.data.data_vars)
+        missing_vars = {"TIME", "PROFILE_NUMBER", "DEPTH", "CHLA"} - set(
+            self.data.data_vars
+        )
         if missing_vars:
-            raise KeyError(f"[Chla Deep Correction] {missing_vars} could not be found in the data.")
+            raise KeyError(
+                f"[Chla Deep Correction] {missing_vars} could not be found in the data."
+            )
 
         # Convert to pandas dataframe and interpolate the DEPTH data
         interp_data = self.data[["TIME", "PROFILE_NUMBER", "DEPTH", "CHLA"]].to_pandas()
-        interp_data["DEPTH"] = interp_data.set_index("TIME")["DEPTH"].interpolate().reset_index(drop=True)
+        interp_data["DEPTH"] = (
+            interp_data.set_index("TIME")["DEPTH"].interpolate().reset_index(drop=True)
+        )
         interp_data = interp_data.dropna(subset=["CHLA", "PROFILE_NUMBER"])
 
         # Subset the data to only deep measurements
-        interp_data = interp_data[
-            interp_data["DEPTH"] < self.depth_threshold
-        ]
+        interp_data = interp_data[interp_data["DEPTH"] < self.depth_threshold]
 
         # Remove profiles that do not have CHLA data below the threshold depth
-        deep_profiles = interp_data.groupby("PROFILE_NUMBER").agg({"CHLA": "count"}).reset_index()
-        deep_profiles = deep_profiles[deep_profiles["CHLA"] > 0]["PROFILE_NUMBER"].to_numpy()
+        deep_profiles = (
+            interp_data.groupby("PROFILE_NUMBER").agg({"CHLA": "count"}).reset_index()
+        )
+        deep_profiles = deep_profiles[deep_profiles["CHLA"] > 0][
+            "PROFILE_NUMBER"
+        ].to_numpy()
         if len(deep_profiles) == 0:
             raise ValueError(
                 "[Chla Deep Correction] No deep profiles could be identified. "
@@ -109,7 +116,7 @@ class chla_deep_correction(BaseStep, QCHandlingMixin):
         # Extract the profile number, depth and chla data for all chla minima per profile
         self.chla_deep_minima = interp_data.loc[
             interp_data.groupby("PROFILE_NUMBER")["CHLA"].idxmin(),
-            ["TIME", "PROFILE_NUMBER", "DEPTH", "CHLA"]
+            ["TIME", "PROFILE_NUMBER", "DEPTH", "CHLA"],
         ]
 
         # Compute median of minimum values
@@ -117,8 +124,8 @@ class chla_deep_correction(BaseStep, QCHandlingMixin):
         self.log(
             f"\nComputed dark value: {self.dark_value:.6f} "
             f"(median of {len(self.chla_deep_minima)} profile minimums)\n"
-            f"Min values range: {np.min(self.chla_deep_minima["CHLA"]):.6f} "
-            f"to {np.max(self.chla_deep_minima["CHLA"]):.6f}"
+            f"Min values range: {np.min(self.chla_deep_minima['CHLA']):.6f} "
+            f"to {np.max(self.chla_deep_minima['CHLA']):.6f}"
         )
 
     def apply_dark_correction(self):
@@ -134,17 +141,18 @@ class chla_deep_correction(BaseStep, QCHandlingMixin):
         )
 
         # Copy and update attributes
-        if hasattr(self.data["CHLA"], 'attrs'):
+        if hasattr(self.data["CHLA"], "attrs"):
             self.data["CHLA_FLUORESCENCE"].attrs = self.data["CHLA"].attrs.copy()
         self.data["CHLA_FLUORESCENCE"].attrs["comment"] = (
             f"CHLA fluorescence with dark value correction (dark_value={self.dark_value:.6f})"
         )
         self.data["CHLA_FLUORESCENCE"].attrs["dark_value"] = self.dark_value
 
-        self.log(f"Applied dark value correction: CHLA_FLUORESCENCE = CHLA_FLUORESCENCE - {self.dark_value:.6f}")
+        self.log(
+            f"Applied dark value correction: CHLA_FLUORESCENCE = CHLA_FLUORESCENCE - {self.dark_value:.6f}"
+        )
 
     def generate_diagnostics(self):
-
         mpl.use("tkagg")
 
         fig, ax = plt.subplots(figsize=(12, 8), dpi=200)
@@ -154,7 +162,7 @@ class chla_deep_correction(BaseStep, QCHandlingMixin):
             self.chla_deep_minima["DEPTH"],
             ls="",
             marker="o",
-            c="b"
+            c="b",
         )
 
         ax.axhline(self.depth_threshold, ls="--", c="k", label="Depth Threshold")
@@ -169,4 +177,3 @@ class chla_deep_correction(BaseStep, QCHandlingMixin):
 
         fig.tight_layout()
         plt.show(block=True)
-

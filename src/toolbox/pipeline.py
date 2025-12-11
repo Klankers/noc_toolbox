@@ -27,11 +27,8 @@ from toolbox.utils.alignment import (
     collect_xy_from_r2_ds,
     fit_linear_map,
 )
-from toolbox.steps import (
-    create_step,
-    STEP_CLASSES,
-    STEP_DEPENDENCIES
-)
+from toolbox.steps import create_step, STEP_CLASSES, STEP_DEPENDENCIES
+
 
 class Pipeline(ConfigMirrorMixin):
     """
@@ -738,9 +735,9 @@ class PipelineManager(ConfigMirrorMixin):
 
             # Cache fits for metadata
             if anc in self.processed_per_glider:
-                self.processed_per_glider[anc][
-                    f"last_fit_to_target_{target}"
-                ] = anc_fits
+                self.processed_per_glider[anc][f"last_fit_to_target_{target}"] = (
+                    anc_fits
+                )
 
         return {"paths": saved_paths, "fits": fits_summary}
 

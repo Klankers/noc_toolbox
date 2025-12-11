@@ -112,8 +112,10 @@ def find_profiles(
     # This converts the boolean 'is_profile' column into numbered profile segments
     df = df.with_columns(
         (
-            (pl.col("is_profile").cast(pl.Float64).diff().replace(-1, 0).cum_sum()
-            * pl.col("is_profile")).replace({0: np.nan})
+            (
+                pl.col("is_profile").cast(pl.Float64).diff().replace(-1, 0).cum_sum()
+                * pl.col("is_profile")
+            ).replace({0: np.nan})
         ).alias("profile_num")
     )
 
@@ -129,7 +131,6 @@ def find_profiles(
 
 @register_step
 class FindProfilesStep(BaseStep, QCHandlingMixin):
-
     step_name = "Find Profiles"
 
     def run(self):
@@ -174,7 +175,6 @@ class FindProfilesStep(BaseStep, QCHandlingMixin):
         return self.context
 
     def generate_diagnostics(self):
-
         def generate_plot():
             # Allows interactive plots
             mpl.use("TkAgg")
@@ -261,7 +261,7 @@ class FindProfilesStep(BaseStep, QCHandlingMixin):
 
         root = tk.Tk()
         root.title("Parameter Adjustment")
-        root.geometry(f"380x{50*len(self.parameters)}")
+        root.geometry(f"380x{50 * len(self.parameters)}")
         entries = {}
 
         # Gradient thresholds
@@ -299,7 +299,7 @@ class FindProfilesStep(BaseStep, QCHandlingMixin):
 
         # Function to handle Cancel button click
         def on_cancel():
-            plt.close('all')
+            plt.close("all")
             root.quit()  # Stops the mainloop
             root.destroy()  # Destroys the window
 
@@ -313,7 +313,7 @@ class FindProfilesStep(BaseStep, QCHandlingMixin):
             self.depth_col = entries["depth_column"].get()
 
             # Regenerate data and plot it
-            plt.close('all')
+            plt.close("all")
             generate_plot()
 
         def on_save():
@@ -323,7 +323,7 @@ class FindProfilesStep(BaseStep, QCHandlingMixin):
                 f"  Filter Window Sizes: {self.win_sizes}\n"
                 f"  Depth column: {self.depth_col}\n"
             )
-            plt.close('all')
+            plt.close("all")
             root.quit()  # Stops the mainloop
             root.destroy()  # Destroys the window
 

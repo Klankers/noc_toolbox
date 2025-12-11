@@ -132,9 +132,7 @@ class DeriveCTDVariables(BaseStep, QCHandlingMixin):
             self.data[var_name].attrs = variable_metadata[var_name]
 
             # generate QC for the new column
-            self.generate_qc(
-                {f"{var_name}_QC": [f"{arg}_QC" for arg in args]}
-            )
+            self.generate_qc({f"{var_name}_QC": [f"{arg}_QC" for arg in args]})
 
         # self.log diagnostic information if diagnostics are enabled
         if self.diagnostics:
