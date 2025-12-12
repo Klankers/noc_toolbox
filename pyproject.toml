@@ -7,6 +7,9 @@ name = "noc-toolbox"
 version = "0.0.1"
 description = "A glider processing package written in Python by the NOC."
 readme = "README.md"
+license = { file = "LICENSE" }
+keywords = ["glider", "qc"]
+
 requires-python = ">=3.10"
 
 dependencies = [
