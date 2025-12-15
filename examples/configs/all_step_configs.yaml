@@ -10,7 +10,7 @@
 # If diagnostics is true, the majority of steps will ouput a basic plot
 
 steps:
-# ----------------- Importing/Generating data -----------------
+# ------------------------------------------------------------------------------------------- Importing/Generating data -------------------------------------------------------------------------------------------
 
 # Generate Data (src/toolbox/steps/custom/gen_data.py):
 #   Generates random data for pipeline input. Typically used for testing
@@ -43,7 +43,8 @@ steps:
     diagnostics: false
 
 
-# ---------------------------- QC -----------------------------
+# ------------------------------------------------------------------------------------------- Quality Control ---------------------------------------------------------------------------------------------------
+
 # All QC tests are called through the "Apply QC" step with individual test settings nested in its config.
 # This updates the QC columns (<var>_QC) of the data depending on the test output. If Apply QC is called
 # then qc_history will be added to the pipeline context which tracks which variables have been tested by
@@ -51,6 +52,7 @@ steps:
 # stages in the processing. All QC test src can be found in: * = src/toolbox/steps/custom/qc
 
 # Apply QC (src/toolbox/steps/custom/apply_qc.py)
+# Applies the specified tests to data using the Argo flag naming conventions.
   - name: "Apply QC"
     parameters:
       # [qc_settings]:
@@ -173,6 +175,223 @@ steps:
     diagnostics: false
 
 
-# -------------- Filtering & Interpolation --------------------
+# ------------------------------------------------------------------------------------ Filtering & Interpolation ------------------------------------------------------------------------------------------
+
+# Processing steps (not yet formally defined) can filter data inputs by QC flag before it is used in processing.
+# This functionality is inherited from QCHandlingMixin (src/toolbox/utils/qc_handling.py). By default, the QC
+# filter does not look for any flags, however this can be changed through the optional inclusion of
+# qc_handling_settings to the step config - see below.
+
+# QC Handling (src/toolbox/utils/qc_handling.py):
+# Allows the user to filter the data before processing steps
+  - name: "" # Any step that inherits from QCHandlingMixin
+    parameters:
+      # [qc_handling_settings]:
+      #   Can be specified in any step that has the QC filtering functionality
+      qc_handling_settings:
+        # [flag_filter_settings]:
+        #   {variable: flags to filter} pairs. Data that is flagged with any of the specified flags is replaced
+        #   with a nan internally. All steps are designed to operate with nans.
+        flag_filter_settings:
+          PRES: [3, 4]
+        # [reconstruction_behaviour]:
+        #   Specifies how the data will be reconstructed after processing has occured. There are two options (defaults to reinsert):
+        #   "replace":  Indices where data was filtered retain their post-processing value and the original "bad data" is deleted.
+        #   "reinsert": The filtered "bad data" is reinserted back into the post-processed data.
+        reconstruction_behaviour: "replace",
+        # [flag_mapping]:
+        #   Tells the QC handler how flags should change for "bad data" indices if the pre- & postprocessing data are different.
+        #   Eg. Interpolation would replace bad and missing values (3, 4, 9) with interpolated values (8).
+        flag_mapping:
+          3: 8
+          4: 8
+          9: 8
+
+# Interpolate Data (src/toolbox/steps/custom/interpolate_data.py):
+# Interpolates over nan values. Paired with QC handling allowing "bad data" to be replaced with nans and interpolated over.
+  - name: "Interpolate Data"
+    parameters:
+      qc_handling_settings:
+        flag_filter_settings:
+          PRES: [3, 4, 9]
+          LATITUDE: [3, 4, 9]
+          LONGITUDE: [3, 4, 9]
+        reconstruction_behaviour: "replace"
+        flag_mapping:
+          3: 8
+          4: 8
+          9: 8
+    # [diagnostics]:
+    #   Creates two comparison plots of before & after interpolation
+    diagnostics: false
+
+
+# ------------------------------------------------------------------------------------------- Profile Finding -------------------------------------------------------------------------------------------
+
+# Find Profiles (src/toolbox/steps/custom/find_profiles.py):
+# Adds PROFILE_NUMBER to the data, grouping points using a vertical velocity thresholding method
+  - name: "Find Profiles"
+    parameters:
+      # [gradient_thresholds]:
+      #   Upper and lower limits for a gliders ascent/descent velocity (m/s). Consecutive groups of values that exceed these limits
+      #   are assigned a profile number. If velocity is within these limits (~0), this data is assigned a nan profile number.
+      gradient_thresholds: [0.033, -0.033]
+      # [filter_window_sizes]:
+      #   Window sizes to adjust smoothing of the vertical velocities. The values apply to ["median filter", "mean filter"]
+      filter_window_sizes: ["20s", "20s"]
+      # [depth_column]:
+      #   Name of the column used to derive vertical valocies
+      depth_column: DEPTH
+    # [diagnostics]:
+    #   If true, the pipeline will plot the profiling result and launch a tkinter window that will let the user adjust the
+    #   above parameters to produce the best profile-search criteria.
+    diagnostics: false
+
+# Find Profile Direction (src/toolbox/steps/custom/profile_direction.py):
+# Determines the profile direction based off of median vertical velocity
+  - name: "Find Profile Direction"
+    parameters:
+    # [diagnostics]:
+    #   Plots DEPTH-TIME with points coloured by direction
+    diagnostics: false
+
+
+# ------------------------------------------------------------------------------------------- CTD Processing -------------------------------------------------------------------------------------------
+
+# CTD processing operates on variables output by the glider CTD (PRES, CNDC, TEMP).
+
+# Derive CTD (src/toolbox/steps/custom/derive_ctd.py):
+# Derives CTD variables using gsw-python (TEOS-10) from PRES, CNDC & TEMP
+  - name: "Derive CTD"
+    parameters:
+      # [to_derive]:
+      #   The user may specify a subset of the below variables to be derived and added to the dataset.
+      to_derive: [
+        DEPTH,
+        PRAC_SALINITY,
+        ABS_SALINITY,
+        CONS_TEMP,
+        DENSITY
+      ]
+    # [diagnostics]: None
+    diagnostics: false
+
+# Salinity Adjustment (src/toolbox/steps/custom/variables/salinity.py -> AdjustSalinity):
+# Applies the thermal-lag correction for Salinity presented in Morrison et al 1994. It is recomended that this be used with
+# QC filtering as the data is used to optimize adjustment coefficients.
+  - name: "Salinity Adjustment"
+    parameters:
+      # [filter_window_size]:
+      #   Running average filter size used to smooth raw data when computing optimal time lags
+      filter_window_size: 21
+      # [plot_profiles_in_range]:
+      #   Slice of profile numbers to include in the diagnostic plotting
+      plot_profiles_in_range: [100, 150]
+    # [diagnostics]:
+    #   Generates two plots: 1. optimal thermal lag found, 2. practical salinity before and after correction
+    diagnostics: false
+
+
 
 # Under construction...
+# Everything below is functional but uncommented
+
+# ------------------------------------------------------------------------------------------- Chl-a processing -------------------------------------------------------------------------------------------
+
+  - name: "Chla Deep Correction"
+    parameters:
+      apply_to: CHLA
+      dark_value: null
+      depth_threshold: -550
+    diagnostics: false
+
+  - name: "Chla Quenching Correction"
+    parameters:
+      method: Argo
+      apply_to: CHLA
+      mld_settings:
+        threshold_on: TEMP
+        reference_depth: -10
+        threshold: 0.2
+      plot_profiles: [101, 200, 201, 300, 301, 400]
+    diagnostics: true
+
+
+# ------------------------------------------------------------------------------------------- Backscatter processing -------------------------------------------------------------------------------------------
+
+  - name: "BBP from Beta"
+    parameters:
+      apply_to: "BBP700"
+      output_as: "BBP700"
+      theta: 124
+      xfactor: 1.076
+    diagnostics: false
+
+  - name: "Isolate BBP Spikes"
+    parameters:
+      apply_to: "BBP700"
+      window_size: 50
+      method: "median"
+    diagnostics: true
+
+
+# ------------------------------------------------------------------------------------------- Oxygen processing -------------------------------------------------------------------------------------------
+
+  - name: "Derive Uncalibrated Phase"
+    parameters:
+      #  <MANDATORY>
+      blue_phase_name: "BPHASE_DOXY"
+      # <OPTIONAL>
+      # red_phase_name: "RPHASE_DOXY"
+    diagnostics: false
+
+  - name: "Derive Optode Temperature"
+    parameters:
+      temp_voltage_name: "TEMP_VOLTAGE_DOXY"
+      calib_coefficients: [0, 1, 0, 0, 0, 0]
+    diagnostics: false
+
+  - name: "Phase Pressure Correction"
+    parameters:
+      optode_pressure_name: "PRES"
+      correction_coefficient: 0.1
+    diagnostics: false
+
+  - name: "Derive Calibrated Phase"
+    parameters:
+      uncalibrated_phase_name: "UNCAL_PHASE_DOXY_PCORR"
+      calib_coefficients: [0, 1, 0, 0]
+    diagnostics: false
+
+  - name: "Derive Oxygen Concentration"
+    parameters:
+      # <MANDATORY>
+      method: "poly"
+      # <METHOD DEPENDENT>
+      # The following params are for "poly" method
+      temperature_name: "CONS_TEMP"
+      calib_coefficient_matrix: [
+        [0, 1, 0, 0],
+        [0, 1, 0, 0],
+        [0, 1, 0, 0],
+        [0, 1, 0, 0],
+        [0, 1, 0, 0]
+      ]
+    diagnostics: false
+
+  - name: "Molar DOXY Salinity Correction"
+    parameters:
+      # <MANDATORY>
+      salinity_name: "PRAC_SALINITY"
+      temperature_name: "CONS_TEMP"
+      # <OPTIONAL>
+      # reference_salinity: 0
+    diagnostics: false
+
+  - name: "Molar DOXY Pressure Correction"
+    parameters:
+      pressure_name: "PRES"
+      temperature_name: "CONS_TEMP"
+      molar_doxy_name: "MOLAR_DOXY_PSAL"
+      uncalibrated_phase_correction_applied: true
+    diagnostics: false
