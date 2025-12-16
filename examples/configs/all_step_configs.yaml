@@ -43,6 +43,20 @@ steps:
     diagnostics: false
 
 
+# ------------------------------------------------------------------------------------------- Exporting data -------------------------------------------------------------------------------------------
+
+# Data Export (src/toolbox/steps/custom/export.py):
+# Saves the current xarray dataset stored in pipeline._context["data"]
+  - name: "Data Export"
+    parameters:
+      # [export_format]:
+      #   netCDF export format compatible with xarray.to_netcdf
+      export_format: netcdf
+      # [output_path]:
+      #   path to the file where the dataset will be exported to
+      output_path: "../examples/data/OG1/Nelson_646_R_Processed.nc"
+
+
 # ------------------------------------------------------------------------------------------- Quality Control ---------------------------------------------------------------------------------------------------
 
 # All QC tests are called through the "Apply QC" step with individual test settings nested in its config.
@@ -292,50 +306,109 @@ steps:
     diagnostics: false
 
 
-
-# Under construction...
-# Everything below is functional but uncommented
-
 # ------------------------------------------------------------------------------------------- Chl-a processing -------------------------------------------------------------------------------------------
 
+# Note that the variables added to the dataset by these steps will appear as <input>_ADJUSTED unless
+# <input> already has the _ADJUSTED suffix, in which case, the input will be modified inplace.
+
+# Chla Deep Correction (src/toolbox/steps/custom/variables/chla.py -> chla_deep_correction):
+# Subtracts a constant value from the data so that deep CHLA values are zeroed.
   - name: "Chla Deep Correction"
     parameters:
+      # [apply_to]:
+      #   Name of the variable to apply the correction to.
       apply_to: CHLA
+      # [dark_value]:
+      #   If null, the dark value will be detemined from the data, else it will use the specified value
       dark_value: null
+      # [depth_threshold]:
+      #   Data used for calculating the dark value will only be taken from below this depth.
       depth_threshold: -550
+    # [diagnostics]:
+    #   Create a plot showing CHLA values over depth with lines for the dark value and depth threshold
     diagnostics: false
 
+# Chla Quenching Correction (src/toolbox/steps/custom/variables/chla.py -> chla_quenching_correction):
+# Offers a selection of Non-photochemical quenching correction techniques for removing Chla signal
+# supression caused by phytoplankton quenching.
   - name: "Chla Quenching Correction"
     parameters:
+      # [method]:
+      #   Method used for quenching correction. Currently only Argo is available which follows Xing et al. 2012
       method: Argo
+      # [apply_to]:
+      #   Name of the variable to apply the correction to.
       apply_to: CHLA
+      # [mld_settings]
+      #   Settings to tune the thresholding method for determining mixed later depth (MLD) which is a
+      #   required intermediate product for this correction.
       mld_settings:
+        # [threshold_on]:
+        #   Variable to use for determining the MLD
         threshold_on: TEMP
+        # [reference_depth]:
+        #   The near-surface point used to set the reference.
         reference_depth: -10
+        # [threshold]:
+        #   The MLD is determined to be the first depth point at which the difference between a measurement and
+        #   its reference is greater than the threshold.
         threshold: 0.2
+      # [plot_profiles]:
+      #   List of profile numbers to be plotted
       plot_profiles: [101, 200, 201, 300, 301, 400]
     diagnostics: true
 
 
 # ------------------------------------------------------------------------------------------- Backscatter processing -------------------------------------------------------------------------------------------
 
+# Note that the variables added to the dataset by these steps will appear as <input>_ADJUSTED unless
+# <input> already has the _ADJUSTED suffix, in which case, the input will be modified inplace.
+
+# BBP from Beta (src/toolbox/steps/custom/variables/bbp.py -> BBPFromBeta):
+# Converts from units of beta to BBP
   - name: "BBP from Beta"
     parameters:
-      apply_to: "BBP700"
-      output_as: "BBP700"
+      # [apply_to]:
+      #   Name of the variable to apply the correction to.
+      apply_to: BBP700
+      # [output_as]:
+      #   Name to use for the output data that is added to the dataset
+      output_as: BBP700
+      # [theta]:
+      #   effective (centroid) optical backscatter scattering angle in degrees which is a function of the
+      #   sensor geometry of the measuring instrument
       theta: 124
+      # [xfactor]:
+      #   X (Chi) factor which scales the particulate scattering value at a particular backwards angle to
+      #   the total particulate backscattering coefficient integrated over all backwards angles.
       xfactor: 1.076
+    # [diagnostics]:
+    #   Creates a box plot comparing value ranges before and after conversion
     diagnostics: false
 
+# Isolate BBP Spikes (src/toolbox/steps/custom/variables/bbp.py -> IsolateBBPSpikes):
+# Uses a running median/minmax filter to separate baseline and spike BBP data.
   - name: "Isolate BBP Spikes"
     parameters:
-      apply_to: "BBP700"
+      # [apply_to]:
+      #   Name of the variable to apply the correction to.
+      apply_to: BBP700
+      # [window_size]:
+      #   Median/minmax filter window size in sample number
       window_size: 50
-      method: "median"
+      # [method]:
+      #   Method used to filter the data to determine the baseline
+      method: median
+    # [Diagnostics]:
+    #   Shows the raw data with smoothed output on top. Extracted spikes are shown below.
     diagnostics: true
 
 
 # ------------------------------------------------------------------------------------------- Oxygen processing -------------------------------------------------------------------------------------------
+
+# The oxygen processing steps are currently being developed. While you are welcome to use these,
+# there is no guarantee that they will produce a useful output. Comments for this section will
+# follow one testing is complete.
 
   - name: "Derive Uncalibrated Phase"
     parameters:
