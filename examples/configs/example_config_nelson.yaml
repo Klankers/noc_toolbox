@@ -1,30 +1,8 @@
 # Pipeline Configuration
 pipeline:
-<<<<<<< HEAD
-  name: "Data Processing Pipeline"
-  description: "A pipeline for processing and analyzing multi-dimensional data"
-  visualisation: false  # Enable visualisation of the pipeline
-# Steps in the pipeline
-steps:
-  # - name: "Load OG1"
-  #   parameters:
-  #     file_path: "../../examples/data/OG1/Nelson_646_R.nc" # Path to the input NetCDF file
-  #     add_meta: false # Add metadata to the data
-  #     add_elapsed_time: false
-  #     add_dev_cols: false 
-  #   diagnostics: false  # Enable diagnostics
-  - name: "Load OG1"
-    parameters:
-      file_path: "/home/aaron-mau/Code/NOC-toolbox/mau/noc_toolbox/data/sea045_20230530T0832_delayed.nc" # Path to the input NetCDF file
-      add_meta: false # Add metadata to the data
-      add_elapsed_time: false
-      add_dev_cols: false 
-    diagnostics: false  # Enable diagnostics
-=======
   name: Example CTD Processing Pipeline
   description: A pipeline for processing CTD data
   visualisation: false
->>>>>>> upstream/main
 
 # Steps in the pipeline
 # For further details on step parameters, see all_step_configs.yaml
@@ -32,28 +10,7 @@ steps:
 steps:
   - name: Load OG1
     parameters:
-<<<<<<< HEAD
-      conductivity_unit_conversion_factor: 1
-      pressure_unit_conversion_factor: 1
-      latitude_longitude_conversion_factor: 1
-      interpolate_latitude_longitude: true
-      to_derive: [  # Derives the variables listed below. You may choose to use a subset
-        "DEPTH",  # Reccomended as Find Profiles is designed to use DEPTH, but will work with PRES as well
-        "PRAC_SALINITY",
-        "ABS_SALINITY",
-        "CONS_TEMP",
-        "DENSITY"
-      ]
-    diagnostics: true
-  
-  - name: "Find Profiles"
-    parameters:
-      gradient_thresholds: [0.02, -0.02]
-      filter_window_sizes: ["10s", "20s"]
-      depth_column: "DEPTH"
-=======
       file_path: ../examples/data/OG1/Nelson_646_R.nc # Path to the input NetCDF file
->>>>>>> upstream/main
     diagnostics: false
 
 # ----------------- BASIC QC + INTERPOLATION ----------------

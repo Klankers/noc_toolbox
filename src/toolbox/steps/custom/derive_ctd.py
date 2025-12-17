@@ -61,7 +61,7 @@ class DeriveCTDVariables(BaseStep, QCHandlingMixin):
         # Define GSW (Gibbs SeaWater) function calls for deriving oceanographic variables
         # Each tuple contains: (output_variable_name, gsw_function, [required_input_variables])
         gsw_function_calls = (
-            ("DEPTH", gsw.z_from_p, ["PRES", "LATITUDE"]),  #   In `qc_handling`, this is `child`, function, then `parent`(s)
+            ("DEPTH", gsw.z_from_p, ["PRES", "LATITUDE"]),
             ("PRAC_SALINITY", gsw.SP_from_C, ["CNDC", "TEMP", "PRES"]),
             (
                 "ABS_SALINITY",
@@ -132,8 +132,9 @@ class DeriveCTDVariables(BaseStep, QCHandlingMixin):
             self.data[var_name].attrs = variable_metadata[var_name]
 
             # generate QC for the new column
-            print({f"{var_name}_QC": [f"{arg}_QC" for arg in args]})
-            self.generate_qc({f"{var_name}_QC": [f"{arg}_QC" for arg in args]}) #   Passes dict of strings into QCHandlingMixin.generate_qc
+            self.generate_qc(
+                {f"{var_name}_QC": [f"{arg}_QC" for arg in args]}
+            )
 
         # self.log diagnostic information if diagnostics are enabled
         if self.diagnostics:

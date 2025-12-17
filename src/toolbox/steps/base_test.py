@@ -1,3 +1,5 @@
+
+
 # Registry of explicitly registered step classes
 REGISTERED_QC = {}
 flag_cols = {
@@ -10,7 +12,7 @@ flag_cols = {
     6: "gray",
     7: "gray",
     8: "cyan",
-    9: "black",
+    9: "black"
 }
 
 
@@ -43,9 +45,7 @@ class BaseTest:
 
         invalid_params = set(kwargs.keys()) - set(self.expected_parameters.keys())
         if invalid_params:
-            raise KeyError(
-                f"Unexpected parameters for {self.test_name}: {invalid_params}"
-            )
+            raise KeyError(f"Unexpected parameters for {self.test_name}: {invalid_params}")
 
         for k, v in kwargs.items():
             self.expected_parameters[k] = v

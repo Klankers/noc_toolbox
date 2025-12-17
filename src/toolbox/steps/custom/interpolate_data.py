@@ -83,20 +83,12 @@ class InterpolateVariables(BaseStep, QCHandlingMixin):
         self.filter_qc()
 
         # Convert to polars dataframe
-        self.df = pl.from_pandas(
-            self.data[list(self.filter_settings.keys() | {"TIME"})].to_dataframe(),
-            nan_to_null=False,
-        )
-        self.unprocessed_df = (
-            self.df.clone()
-        )  # Making a copy for plotting change in diagnostics
+        self.df = pl.from_pandas(self.data[list(self.filter_settings.keys() | {"TIME"})].to_dataframe(), nan_to_null=False)
+        self.unprocessed_df = self.df.clone()  # Making a copy for plotting change in diagnostics
 
         # Interpolate
         self.df = self.df.with_columns(
-            pl.col(var)
-            .replace({np.nan: None})
-            .interpolate_by("TIME")
-            .replace({None: np.nan})
+            pl.col(var).replace({np.nan: None}).interpolate_by("TIME").replace({None: np.nan})
             for var in self.filter_settings.keys()
         )
 
@@ -128,9 +120,7 @@ class InterpolateVariables(BaseStep, QCHandlingMixin):
         """
 
         matplotlib.use("tkagg")
-        fig, axs = plt.subplots(
-            nrows=2, sharex=True, sharey=True, figsize=(12, 8), dpi=200
-        )
+        fig, axs = plt.subplots(nrows=2, sharex=True, sharey=True, figsize=(12, 8), dpi=200)
 
         plot_var = list(self.filter_settings.keys())[0]
         for ax, data in zip(axs.flatten(), [self.unprocessed_df, self.df]):

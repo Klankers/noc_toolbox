@@ -8,7 +8,6 @@ from datetime import datetime
 import matplotlib
 import matplotlib.pyplot as plt
 
-
 @register_qc
 class impossible_date_test(BaseTest):
     """
@@ -24,22 +23,22 @@ class impossible_date_test(BaseTest):
     qc_outputs = ["TIME_QC"]
 
     def return_qc(self):
+
         # Convert to polars
         self.df = pl.from_pandas(
-            self.data[self.required_variables].to_dataframe(), nan_to_null=False
+            self.data[self.required_variables].to_dataframe(),
+            nan_to_null=False
         )
 
         # Check if any of the datetime stamps fall outside 1985 and the current datetime
         self.df = self.df.with_columns(
-            pl.when(pl.col("TIME").is_null())
-            .then(9)
+            pl.when(
+                pl.col("TIME").is_null()
+            ).then(9)
             .when(
-                (
-                    (pl.col("TIME") > datetime(1985, 1, 1))
-                    & (pl.col("TIME") < datetime.now())
-                )
-            )
-            .then(1)
+                ((pl.col("TIME") > datetime(1985, 1, 1))
+                & (pl.col("TIME") < datetime.now()))
+            ).then(1)
             .otherwise(4)
             .alias("TIME_QC")
         )
@@ -48,9 +47,10 @@ class impossible_date_test(BaseTest):
         flags = self.df.select(pl.col("^.*_QC$"))
         self.flags = xr.Dataset(
             data_vars={
-                col: ("N_MEASUREMENTS", flags[col].to_numpy()) for col in flags.columns
+                col: ("N_MEASUREMENTS", flags[col].to_numpy())
+                for col in flags.columns
             },
-            coords={"N_MEASUREMENTS": self.data["N_MEASUREMENTS"]},
+            coords={"N_MEASUREMENTS": self.data["N_MEASUREMENTS"]}
         )
 
         return self.flags
@@ -60,7 +60,9 @@ class impossible_date_test(BaseTest):
         fig, ax = plt.subplots(figsize=(6, 4), dpi=200)
         for i in range(10):
             # Plot by flag number
-            plot_data = self.df.with_row_index().filter(pl.col("TIME_QC") == i)
+            plot_data = self.df.with_row_index().filter(
+                pl.col("TIME_QC") == i
+            )
             if len(plot_data) == 0:
                 continue
 
