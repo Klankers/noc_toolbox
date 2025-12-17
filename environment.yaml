@@ -36,4 +36,5 @@ dependencies:
 
   # mau_noc_toolbox specific additions
   - bokeh
+  - graphviz  # This is missing in their environment.yaml, but is present in requirements.txt. No pinned version. Hopefully this is fine?
 

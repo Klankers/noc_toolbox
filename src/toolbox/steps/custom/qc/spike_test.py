@@ -10,7 +10,7 @@ from tqdm import tqdm
 
 
 @register_qc
-class stuck_value_test(BaseTest):
+class spike_test(BaseTest):
     """
     Target Variable: Any
     Flag Number: 4 (bad)
@@ -62,7 +62,7 @@ class stuck_value_test(BaseTest):
         )
 
         if data is not None:
-            self.data = data.copy()
+            self.data = data.copy(deep=True)
 
         # set attributes
         for k, v in self.expected_parameters.items():
@@ -80,6 +80,7 @@ class stuck_value_test(BaseTest):
             spike_qc = np.full(len(self.data[var]), 0)
 
             # Apply the checks across individual profiles
+<<<<<<< HEAD
             profile_numbers = np.unique(
                 self.data["PROFILE_NUMBER"].dropna(dim="N_MEASUREMENTS")
             )
@@ -89,6 +90,11 @@ class stuck_value_test(BaseTest):
                 desc=f"\033[97mProgress [{var}]\033[0m",
                 unit="profile",
             ):
+=======
+            profile_numbers = np.unique(self.data["PROFILE_NUMBER"].dropna(dim="N_MEASUREMENTS"))
+            for profile_number in tqdm(profile_numbers, colour="green", desc=f'\033[97mProgress [{var}]\033[0m', unit="prof"):
+
+>>>>>>> upstream/main
                 # Subset the data
                 profile = self.data.where(
                     self.data["PROFILE_NUMBER"] == profile_number, drop=True

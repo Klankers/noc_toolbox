@@ -1,66 +1,471 @@
 # All step configs
+# The general structure of a step follows:
+#
+# - name:
+#   parameters:
+#     ...
+#   diagnostics:
+#
+# Parameters is used to specify user inputs that are required to run the step
+# If diagnostics is true, the majority of steps will ouput a basic plot
+
 steps:
-# Importing/Generating data
+# ------------------------------------------------------------------------------------------- Importing/Generating data -------------------------------------------------------------------------------------------
+
+# Generate Data (src/toolbox/steps/custom/gen_data.py):
+#   Generates random data for pipeline input. Typically used for testing
   - name: "Generate Data"
     parameters:
-      sampling_info: ["2025-01-01", "2025-01-02", 20]  # [start_date (y-m-d), end_date (y-m-d), sample_period (s)]
+      # [sampling info]:
+      #   [start_date (y-m-d), end_date (y-m-d), sample_period (s)]
+      sampling_info: ["2025-01-01", "2025-01-02", 20]
+      # [additional_variables]:
+      #   By default, TIME, GPS and raw CTD data are generated ("LATITUDE", "LONGITUDE", "PRES", "TEMP", "CNDC")
+      #   Variables listed in "additional_variables" will be added to the defaults
       additional_variables: ["DENSITY", "ABS_SALINITY"]
-      value_limits: {
-        "DENSITY": [1028, 1032],
-      }
-      diagnostics: true
+      # [value_limits]:
+      #   Random sampling range for specified variables
+      value_limits:
+        "DENSITY": [1028, 1032]
+    # [diagnostics]:
+    #   No diagnostic output defined
+    diagnostics: false
 
+# Load OG1 (src/toolbox/steps/custom/load_data.py):
+#   Loads netCDF (*.nc) data files into the pipeline
   - name: "Load OG1"
     parameters:
-      file_path: "../../examples/data/OG1/Cabot_645_R.nc" # Path to the input NetCDF file
-      add_meta: false # Add metadata to the data
-      add_elapsed_time: false  # Add ELAPSED_TIME in seconds to the data
-      add_dev_cols: false  # Add dev columns such as CTD_TIME (for testing)
-    diagnostics: false  # Enable diagnostics
+      # [file_path]:
+      #   Path to the input NetCDF file
+      file_path: "../examples/data/OG1/Cabot_645.nc"
+    # [diagnostics]:
+    #   Prints a summary of dataset variables and attributes
+    diagnostics: false
 
-# Processing
-  - name: "Apply QC"
-    parameters:
-      QC_order: [  # Applies the following tests in the written order. You may choose to rearange or remove tests.
-        "impossible date test",
-        "impossible location test",
-        "position on land test",
-        "impossible speed test",
-        "pressure range test"
-      ]
-      diagnostics: true  # Generates plots for each test (currently very slow)
 
-  - name: "Interpolate Data"
-    parameters:
-      variables_to_interpolate: [  # List of all variables you would like to interpolate
-          "LATITUDE",
-          "LONGITUDE",
-          "PRES"
-      ]
-      target_flags: [3, 4, 9]  # Flags that will be interpolated over
-    diagnostics: true
+# ------------------------------------------------------------------------------------------- Exporting data -------------------------------------------------------------------------------------------
 
-  - name: "Derive CTD"
-    parameters:
-      to_derive: [  # Derives the variables listed below. You may choose to use a subset
-        "DEPTH",  # Reccomended as Find Profiles is designed to use DEPTH, but will work with PRES as well
-        "PRAC_SALINITY",
-        "ABS_SALINITY",
-        "CONS_TEMP",
-        "DENSITY"
-      ]
-    diagnostics: true  # Prints a sample of the dataset
-
-  - name: "Find Profiles"
-    parameters:
-      gradient_thresholds: [ 0.02, -0.02 ]  # Thresholds on vertical velocity to determine profile end points
-      filter_window_sizes: [ "10s", "20s" ]  # Window sizes for [median, mean] filtering the vertical velocity signal (helps with bumpy profiles)
-      depth_column: "DEPTH"  # Variable used to calculate "vertical velocity (W)" (can be anything in theory, it just wont be W)
-    diagnostics: false  # If true, the user can adjust the filters and thresholds to optimise the profiling
-
-# Data export
+# Data Export (src/toolbox/steps/custom/export.py):
+# Saves the current xarray dataset stored in pipeline._context["data"]
   - name: "Data Export"
     parameters:
-      export_format: "hdf5"  # Define the export format (e.g., OG1, CSV, etc.)
-      output_path: "../../examples/data/OG1/exported_Cabot_645.nc"  # Export path
-    diagnostics: false  # Disable diagnostics for export step
+      # [export_format]:
+      #   netCDF export format compatible with xarray.to_netcdf
+      export_format: netcdf
+      # [output_path]:
+      #   path to the file where the dataset will be exported to
+      output_path: "../examples/data/OG1/Nelson_646_R_Processed.nc"
+
+
+# ------------------------------------------------------------------------------------------- Quality Control ---------------------------------------------------------------------------------------------------
+
+# All QC tests are called through the "Apply QC" step with individual test settings nested in its config.
+# This updates the QC columns (<var>_QC) of the data depending on the test output. If Apply QC is called
+# then qc_history will be added to the pipeline context which tracks which variables have been tested by
+# which tests. Apply QC can be called multiple times, so any test can be run multiple times at different
+# stages in the processing. All QC test src can be found in: * = src/toolbox/steps/custom/qc
+
+# Apply QC (src/toolbox/steps/custom/apply_qc.py)
+# Applies the specified tests to data using the Argo flag naming conventions.
+  - name: "Apply QC"
+    parameters:
+      # [qc_settings]:
+      #   test name: settings pairs. The order of application runs top-down.
+      qc_settings:
+        # impossible date test (*/impossible_date_test.py):
+        #   Flag: 4 (bad)
+        #   Checks that the TIME variable has values between 1985 and now.
+        impossible date test: {},
+
+        # impossible location test (*/impossible_location_test.py):
+        #   Flag: 4 (bad)
+        #   Check that LATITUDE and LONGITUDE are between (-90, 90) and (-180, 180) degress respectively.
+        impossible location test: {},
+
+        # position on land test (*/position_on_land_test.py):
+        #   Flag: 4 (bad)
+        #   Checks if the GPS coords are on land.
+        position on land test: {},
+
+        # impossible speed test (*/impossible_speed_test.py):
+        #   Flag: 4 (bad)
+        #   Checks if the horizontal speed derived from LATITUDE, LONGITUDE and TIME is valid.
+        impossible speed test: {},
+
+        # range test (*/range_test.py):
+        #   Flag: User-specified
+        #   Flags values that lie within the user-specified limits with the user-specified flag.
+        #   The results from one variable can be propagated onto other variables using "also_flag".
+        #   This test can also be limited to specific depth ranges if DEPTH is in the dataset vars.
+        range test:
+          # [variable_ranges]:
+          #   variable: {flag: value range} pairs indicating what value ranges should be flagged.
+          #   Multiple variables can be specified - the flag updates are applied top-down.
+          variable_ranges:
+            PRES:
+              3: [-5, -2.4]
+              4: [-.inf, -5]
+          # [also_flag]:
+          #   Alows the QC result from one variable to be applied to others. eg. Often if PRES fails a
+          #   range test, it is assumed that all CTD variables are no longer trustworthy.
+          also_flag:
+            PRES: [CNDC, TEMP]
+          # [plot]:
+          #   Plots data coloured by flag for the variables listed.
+          plot: [PRES]
+
+        # stuck value test (*/stuck_value_test.py):
+        #   Flag: 4 (bad)
+        #   Checks for stuck values defined by N repeats of the same value.
+        stuck value test:
+          # [variables]:
+          #   {variable: N} pairs with N being the number of repeats of a value to make it stuck
+          variables:
+            PRES: 2
+          # [also_flag]:
+          #   Alows the QC result from one variable to be applied to others.
+          also_flag:
+            PRES: [CNDC, TEMP]
+          # [plot]:
+          #   Plots data coloured by flag for the variables listed.
+          plot: [PRES]
+
+        # spike test (*/spike_test.py):
+        #   Flag: 4 (bad)
+        #   Checks for spiking using deviation from the local median of specified variables.
+        spike test:
+          # [variables]:
+          #   {variable: N} specifying which variables to apply the test to and the outlier threshold multiplier
+          #   N, values are flagged if their values exceed (locally) median +- N * standard deviation.
+          variables:
+            PRES: 2,
+            LATITUDE: 1
+          # [window_size]:
+          #   The window size for the running median and standard deviation caluclations
+          window_size: 10
+          # [also_flag]:
+          #   Alows the QC result from one variable to be applied to others.
+          also_flag:
+            PRES: [CNDC, TEMP],
+            LATITUDE: [LONGITUDE]
+          # [plot]:
+          #   Plots data coloured by flag for the variables listed.
+          plot: [PRES, LATITUDE]
+
+        # valid_profile_test (*/valid_profile_test.py):
+        #   Flag: 4 (bad), 3 (probably bad)
+        #   Checks if profiles have at least N datapoints and contain data in a specific depth range
+        valid profile test:
+          # [profile_length]:
+          #   Number of datapoints per profile below which the entire profile will be flagged 4
+          profile_length: 1000,
+          # [depth_range]:
+          #   DEPTH range that a profile must have at least one point in, otherwise it is flagged 3
+          depth_range: [-.inf, 0]
+
+        # flag_full_profile (*/flag_full_profile.py):
+        #   Flag: 4 (bad)
+        #   flags a whole profile if a user-specified limit of bad (4) flags are found.
+        flag_full_profile:
+          # [check_vars]:
+          #   {variable: N} pairs where if >N bad values are found, the whole profile is flagged
+          check_vars:
+            PRES: 10
+            CHLA: 20
+
+        # PAR irregularity test (*/par_irregularity_test.py):
+        #   Flag: 4 (bad), 3 (probably bad)
+        #   Flags each PAR measurement according to the statistical shape of the irradiance profile and
+        #   solar elevation. Based on La Forgia & Organelli (2025, L&O Methods, 23:526–542).
+        PAR irregularity test:
+          # [noise_equivalent_estimate]:
+          #   The PAR noise floor. If values are found below this they are flagged as probably bad (3).
+          noise_equivalent_estimate: 3e-2
+          # [plot_profiles]:
+          #   List of profile numbers to be plotted
+          plot_profiles: [100, 200]
+    # [diagnostics]:
+    #   If diagnostics is true, every specified test in this Apply QC call will generate plots
+    diagnostics: false
+
+
+# ------------------------------------------------------------------------------------ Filtering & Interpolation ------------------------------------------------------------------------------------------
+
+# Processing steps (not yet formally defined) can filter data inputs by QC flag before it is used in processing.
+# This functionality is inherited from QCHandlingMixin (src/toolbox/utils/qc_handling.py). By default, the QC
+# filter does not look for any flags, however this can be changed through the optional inclusion of
+# qc_handling_settings to the step config - see below.
+
+# QC Handling (src/toolbox/utils/qc_handling.py):
+# Allows the user to filter the data before processing steps
+  - name: "" # Any step that inherits from QCHandlingMixin
+    parameters:
+      # [qc_handling_settings]:
+      #   Can be specified in any step that has the QC filtering functionality
+      qc_handling_settings:
+        # [flag_filter_settings]:
+        #   {variable: flags to filter} pairs. Data that is flagged with any of the specified flags is replaced
+        #   with a nan internally. All steps are designed to operate with nans.
+        flag_filter_settings:
+          PRES: [3, 4]
+        # [reconstruction_behaviour]:
+        #   Specifies how the data will be reconstructed after processing has occured. There are two options (defaults to reinsert):
+        #   "replace":  Indices where data was filtered retain their post-processing value and the original "bad data" is deleted.
+        #   "reinsert": The filtered "bad data" is reinserted back into the post-processed data.
+        reconstruction_behaviour: "replace",
+        # [flag_mapping]:
+        #   Tells the QC handler how flags should change for "bad data" indices if the pre- & postprocessing data are different.
+        #   Eg. Interpolation would replace bad and missing values (3, 4, 9) with interpolated values (8).
+        flag_mapping:
+          3: 8
+          4: 8
+          9: 8
+
+# Interpolate Data (src/toolbox/steps/custom/interpolate_data.py):
+# Interpolates over nan values. Paired with QC handling allowing "bad data" to be replaced with nans and interpolated over.
+  - name: "Interpolate Data"
+    parameters:
+      qc_handling_settings:
+        flag_filter_settings:
+          PRES: [3, 4, 9]
+          LATITUDE: [3, 4, 9]
+          LONGITUDE: [3, 4, 9]
+        reconstruction_behaviour: "replace"
+        flag_mapping:
+          3: 8
+          4: 8
+          9: 8
+    # [diagnostics]:
+    #   Creates two comparison plots of before & after interpolation
+    diagnostics: false
+
+
+# ------------------------------------------------------------------------------------------- Profile Finding -------------------------------------------------------------------------------------------
+
+# Find Profiles (src/toolbox/steps/custom/find_profiles.py):
+# Adds PROFILE_NUMBER to the data, grouping points using a vertical velocity thresholding method
+  - name: "Find Profiles"
+    parameters:
+      # [gradient_thresholds]:
+      #   Upper and lower limits for a gliders ascent/descent velocity (m/s). Consecutive groups of values that exceed these limits
+      #   are assigned a profile number. If velocity is within these limits (~0), this data is assigned a nan profile number.
+      gradient_thresholds: [0.033, -0.033]
+      # [filter_window_sizes]:
+      #   Window sizes to adjust smoothing of the vertical velocities. The values apply to ["median filter", "mean filter"]
+      filter_window_sizes: ["20s", "20s"]
+      # [depth_column]:
+      #   Name of the column used to derive vertical valocies
+      depth_column: DEPTH
+    # [diagnostics]:
+    #   If true, the pipeline will plot the profiling result and launch a tkinter window that will let the user adjust the
+    #   above parameters to produce the best profile-search criteria.
+    diagnostics: false
+
+# Find Profile Direction (src/toolbox/steps/custom/profile_direction.py):
+# Determines the profile direction based off of median vertical velocity
+  - name: "Find Profile Direction"
+    parameters:
+    # [diagnostics]:
+    #   Plots DEPTH-TIME with points coloured by direction
+    diagnostics: false
+
+
+# ------------------------------------------------------------------------------------------- CTD Processing -------------------------------------------------------------------------------------------
+
+# CTD processing operates on variables output by the glider CTD (PRES, CNDC, TEMP).
+
+# Derive CTD (src/toolbox/steps/custom/derive_ctd.py):
+# Derives CTD variables using gsw-python (TEOS-10) from PRES, CNDC & TEMP
+  - name: "Derive CTD"
+    parameters:
+      # [to_derive]:
+      #   The user may specify a subset of the below variables to be derived and added to the dataset.
+      to_derive: [
+        DEPTH,
+        PRAC_SALINITY,
+        ABS_SALINITY,
+        CONS_TEMP,
+        DENSITY
+      ]
+    # [diagnostics]: None
+    diagnostics: false
+
+# Salinity Adjustment (src/toolbox/steps/custom/variables/salinity.py -> AdjustSalinity):
+# Applies the thermal-lag correction for Salinity presented in Morrison et al 1994. It is recomended that this be used with
+# QC filtering as the data is used to optimize adjustment coefficients.
+  - name: "Salinity Adjustment"
+    parameters:
+      # [filter_window_size]:
+      #   Running average filter size used to smooth raw data when computing optimal time lags
+      filter_window_size: 21
+      # [plot_profiles_in_range]:
+      #   Slice of profile numbers to include in the diagnostic plotting
+      plot_profiles_in_range: [100, 150]
+    # [diagnostics]:
+    #   Generates two plots: 1. optimal thermal lag found, 2. practical salinity before and after correction
+    diagnostics: false
+
+
+# ------------------------------------------------------------------------------------------- Chl-a processing -------------------------------------------------------------------------------------------
+
+# Note that the variables added to the dataset by these steps will appear as <input>_ADJUSTED unless
+# <input> already has the _ADJUSTED suffix, in which case, the input will be modified inplace.
+
+# Chla Deep Correction (src/toolbox/steps/custom/variables/chla.py -> chla_deep_correction):
+# Subtracts a constant value from the data so that deep CHLA values are zeroed.
+  - name: "Chla Deep Correction"
+    parameters:
+      # [apply_to]:
+      #   Name of the variable to apply the correction to.
+      apply_to: CHLA
+      # [dark_value]:
+      #   If null, the dark value will be detemined from the data, else it will use the specified value
+      dark_value: null
+      # [depth_threshold]:
+      #   Data used for calculating the dark value will only be taken from below this depth.
+      depth_threshold: -550
+    # [diagnostics]:
+    #   Create a plot showing CHLA values over depth with lines for the dark value and depth threshold
+    diagnostics: false
+
+# Chla Quenching Correction (src/toolbox/steps/custom/variables/chla.py -> chla_quenching_correction):
+# Offers a selection of Non-photochemical quenching correction techniques for removing Chla signal
+# supression caused by phytoplankton quenching.
+  - name: "Chla Quenching Correction"
+    parameters:
+      # [method]:
+      #   Method used for quenching correction. Currently only Argo is available which follows Xing et al. 2012
+      method: Argo
+      # [apply_to]:
+      #   Name of the variable to apply the correction to.
+      apply_to: CHLA
+      # [mld_settings]
+      #   Settings to tune the thresholding method for determining mixed later depth (MLD) which is a
+      #   required intermediate product for this correction.
+      mld_settings:
+        # [threshold_on]:
+        #   Variable to use for determining the MLD
+        threshold_on: TEMP
+        # [reference_depth]:
+        #   The near-surface point used to set the reference.
+        reference_depth: -10
+        # [threshold]:
+        #   The MLD is determined to be the first depth point at which the difference between a measurement and
+        #   its reference is greater than the threshold.
+        threshold: 0.2
+      # [plot_profiles]:
+      #   List of profile numbers to be plotted
+      plot_profiles: [101, 200, 201, 300, 301, 400]
+    diagnostics: true
+
+
+# ------------------------------------------------------------------------------------------- Backscatter processing -------------------------------------------------------------------------------------------
+
+# Note that the variables added to the dataset by these steps will appear as <input>_ADJUSTED unless
+# <input> already has the _ADJUSTED suffix, in which case, the input will be modified inplace.
+
+# BBP from Beta (src/toolbox/steps/custom/variables/bbp.py -> BBPFromBeta):
+# Converts from units of beta to BBP
+  - name: "BBP from Beta"
+    parameters:
+      # [apply_to]:
+      #   Name of the variable to apply the correction to.
+      apply_to: BBP700
+      # [output_as]:
+      #   Name to use for the output data that is added to the dataset
+      output_as: BBP700
+      # [theta]:
+      #   effective (centroid) optical backscatter scattering angle in degrees which is a function of the
+      #   sensor geometry of the measuring instrument
+      theta: 124
+      # [xfactor]:
+      #   X (Chi) factor which scales the particulate scattering value at a particular backwards angle to
+      #   the total particulate backscattering coefficient integrated over all backwards angles.
+      xfactor: 1.076
+    # [diagnostics]:
+    #   Creates a box plot comparing value ranges before and after conversion
+    diagnostics: false
+
+# Isolate BBP Spikes (src/toolbox/steps/custom/variables/bbp.py -> IsolateBBPSpikes):
+# Uses a running median/minmax filter to separate baseline and spike BBP data.
+  - name: "Isolate BBP Spikes"
+    parameters:
+      # [apply_to]:
+      #   Name of the variable to apply the correction to.
+      apply_to: BBP700
+      # [window_size]:
+      #   Median/minmax filter window size in sample number
+      window_size: 50
+      # [method]:
+      #   Method used to filter the data to determine the baseline
+      method: median
+    # [Diagnostics]:
+    #   Shows the raw data with smoothed output on top. Extracted spikes are shown below.
+    diagnostics: true
+
+
+# ------------------------------------------------------------------------------------------- Oxygen processing -------------------------------------------------------------------------------------------
+
+# The oxygen processing steps are currently being developed. While you are welcome to use these,
+# there is no guarantee that they will produce a useful output. Comments for this section will
+# follow one testing is complete.
+
+  - name: "Derive Uncalibrated Phase"
+    parameters:
+      #  <MANDATORY>
+      blue_phase_name: "BPHASE_DOXY"
+      # <OPTIONAL>
+      # red_phase_name: "RPHASE_DOXY"
+    diagnostics: false
+
+  - name: "Derive Optode Temperature"
+    parameters:
+      temp_voltage_name: "TEMP_VOLTAGE_DOXY"
+      calib_coefficients: [0, 1, 0, 0, 0, 0]
+    diagnostics: false
+
+  - name: "Phase Pressure Correction"
+    parameters:
+      optode_pressure_name: "PRES"
+      correction_coefficient: 0.1
+    diagnostics: false
+
+  - name: "Derive Calibrated Phase"
+    parameters:
+      uncalibrated_phase_name: "UNCAL_PHASE_DOXY_PCORR"
+      calib_coefficients: [0, 1, 0, 0]
+    diagnostics: false
+
+  - name: "Derive Oxygen Concentration"
+    parameters:
+      # <MANDATORY>
+      method: "poly"
+      # <METHOD DEPENDENT>
+      # The following params are for "poly" method
+      temperature_name: "CONS_TEMP"
+      calib_coefficient_matrix: [
+        [0, 1, 0, 0],
+        [0, 1, 0, 0],
+        [0, 1, 0, 0],
+        [0, 1, 0, 0],
+        [0, 1, 0, 0]
+      ]
+    diagnostics: false
+
+  - name: "Molar DOXY Salinity Correction"
+    parameters:
+      # <MANDATORY>
+      salinity_name: "PRAC_SALINITY"
+      temperature_name: "CONS_TEMP"
+      # <OPTIONAL>
+      # reference_salinity: 0
+    diagnostics: false
+
+  - name: "Molar DOXY Pressure Correction"
+    parameters:
+      pressure_name: "PRES"
+      temperature_name: "CONS_TEMP"
+      molar_doxy_name: "MOLAR_DOXY_PSAL"
+      uncalibrated_phase_correction_applied: true
+    diagnostics: false
+

@@ -18,10 +18,10 @@ class QCHandlingMixin:
             raise ValueError("No data found in context. Please load data first.")
         else:
             self.log(f"Data found in context.")
-        self.data = self.context["data"].copy()
+        self.data = self.context["data"].copy(deep=True)
 
         # Make a copy of the data for reference
-        self.data_copy = self.data.copy()
+        self.data_copy = self.data.copy(deep=True)
 
         # Check that the variables are present for filter execusion
         missing_variables = []
@@ -108,7 +108,7 @@ class QCHandlingMixin:
                 continue
 
             # Assign the child the first parents QC
-            self.data[qc_child] = self.data[qc_parents[0]].copy()
+            self.data[qc_child] = self.data[qc_parents[0]].copy(deep=True)
 
             # If there is more than 1 parent, then itteratively upgrade the QC
             if len(qc_parents) > 1:
@@ -132,6 +132,10 @@ class QCHandlingMixin:
                     self.data[qc_child][:] = qc_combinatrix[
                         self.data[qc_child], self.data[qc_parent]
                     ]
+
+            # Flag nans as missing values
+            is_nan = np.isnan(self.data[f"{qc_child[:-3]}"])
+            self.data[f"{qc_child}"] = xr.where(is_nan, 9, self.data[f"{qc_child}"])
 
         # Check for any new columns that are missing QC
         all_var_names = {

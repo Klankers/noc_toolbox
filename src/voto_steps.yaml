@@ -1,0 +1,33 @@
+# What we want to do
+# Load the data (i/o) as OG1
+# Check time, lat, lon, pressure
+# Check science with a defined list of variables
+
+
+steps:
+# Importing/Generating data
+  - name: "Load OG1"
+    parameters:
+      file_path: "/home/aaron-mau/Code/NOC-toolbox/mau/noc_toolbox/data/sea045_20230530T0832_delayed.nc" # Path to the input NetCDF file
+      add_meta: false # Add metadata to the data
+      add_elapsed_time: false  # Add ELAPSED_TIME in seconds to the data
+      add_dev_cols: false  # Add dev columns such as CTD_TIME (for testing)
+    diagnostics: false  # Enable diagnostics
+
+  - name: "Find Profiles"
+    parameters:
+      gradient_thresholds: [ 0.02, -0.02 ]  # Thresholds on vertical velocity to determine profile end points
+      filter_window_sizes: [ "10s", "20s" ]  # Window sizes for [median, mean] filtering the vertical velocity signal (helps with bumpy profiles)
+      depth_column: "DEPTH"  # Variable used to calculate "vertical velocity (W)" (can be anything in theory, it just wont be W)
+    diagnostics: false  # If true, the user can adjust the filters and thresholds to optimise the profiling
+
+  - name: "Write report"
+    parameters:
+      report_type: "TESTING REPORT"
+      depth_column: "DEPTH"
+  
+  - name: "Data Export"
+    parameters:
+      export_format: "hdf5"  # Define the export format (e.g., OG1, CSV, etc.)
+      output_path: "/home/aaron-mau/Code/NOC-toolbox/mau/noc_toolbox/data/ifyouseethisyouwin_yetagain.nc"  # Export path
+    diagnostics: false  # Disable diagnostics for export step

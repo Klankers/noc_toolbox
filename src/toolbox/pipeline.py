@@ -10,6 +10,7 @@ from graphviz import Digraph
 
 from toolbox.utils.config_mirror import ConfigMirrorMixin
 
+<<<<<<< HEAD
 from toolbox.utils.diagnostics import (
     summarising_profiles,
     plot_distance_time_grid,
@@ -29,6 +30,13 @@ from toolbox.utils.alignment import (
 )
 from toolbox.steps import create_step, STEP_CLASSES, STEP_DEPENDENCIES
 
+=======
+from toolbox.steps import (
+    create_step,
+    STEP_CLASSES,
+    STEP_DEPENDENCIES
+)
+>>>>>>> upstream/main
 
 class Pipeline(ConfigMirrorMixin):
     """
@@ -195,6 +203,7 @@ class Pipeline(ConfigMirrorMixin):
         """Save the canonical private config (same as manager.save_config)."""
         # ensure _parameters is up to date
         self._parameters.update(self.generate_config())
+<<<<<<< HEAD
         super().save_config(path)
 
 
@@ -939,3 +948,6 @@ class PipelineManager(ConfigMirrorMixin):
         self.processed_per_glider[target][f"last_fit_to_device_{device_name}"] = fits
 
         return {"fits": fits, "device_name": device_name}
+=======
+        super().save_config(path)
+>>>>>>> upstream/main

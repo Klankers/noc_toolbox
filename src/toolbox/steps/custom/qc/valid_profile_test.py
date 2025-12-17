@@ -45,10 +45,22 @@ class valid_profile_test(BaseTest):
         self.df = self.df.join(profile_ranges, on="PROFILE_NUMBER", how="left")
 
         self.df = self.df.with_columns(
+<<<<<<< HEAD
             pl.when(pl.col("count") < self.profile_length)
             .then(4)
             .when(pl.col("in_depth_range").not_())
             .then(3)
+=======
+            pl.when(
+                pl.col("PROFILE_NUMBER").is_nan()
+            ).then(9)
+            .when(
+                pl.col("count") < self.profile_length
+            ).then(4)
+            .when(
+                pl.col("in_depth_range").not_()
+            ).then(3)
+>>>>>>> upstream/main
             .otherwise(1)
             .alias("PROFILE_NUMBER_QC")
         )
